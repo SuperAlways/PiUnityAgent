@@ -38,8 +38,8 @@
 | `packages/ai/src/utils/abort.ts` | `src/PiUnityAgent.Ai/Reliability/Abort.cs` | ⬜ | 优先用 `CancellationToken` |
 | `packages/ai/src/api/openai-completions.ts` | `src/PiUnityAgent.Ai/Api/OpenAiCompletions.cs` | ⬜ | OpenAI-compatible / DeepSeek |
 | `packages/ai/src/api/anthropic-messages.ts` | `src/PiUnityAgent.Ai/Api/AnthropicMessages.cs` | ⬜ | 保留 cache/thinking 语义 |
-| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/FauxProvider.cs` | ⬜ | **第一优先**：无网测试 |
-| `packages/ai/src/models.ts` / `model-catalog.ts` | `src/PiUnityAgent.Ai/Providers/ModelCatalog.cs` | 🟡 | 只保留必要模型元数据 |
+| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；deferred/auth 后置 |
+| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | 🟡 | 最小 chat 注册表；auth/刷新/图片/分类后置 |
 | `packages/ai/src/index.ts` | — | ⛔ | C# 不建 barrel |
 | `packages/ai/src/auth/**`、`oauth*.ts` | — | ⛔ | 不做 OAuth/CLI 登录 |
 | `packages/ai/src/images*`、`classify*` | — | ⛔ | 不做图片/分类 |
