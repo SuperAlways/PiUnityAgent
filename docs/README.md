@@ -9,6 +9,7 @@
 | [04-开发流程分轨与模型路由](04-开发流程分轨与模型路由.md) | 设计/移植/探索三类工作、轻量移植流程、模型档位分配、成本纪律、失败升级阶梯 | v1 |
 | [05-教学阶段路线](05-教学阶段路线.md) | S0–S13 教学阶段、参考索引、与 M1/2A/2B 的映射 | v1 |
 | [06-工程架构与包依赖](06-工程架构与包依赖.md) | 当前 solution/工程/依赖方向/TFM/职责/边界/构建命令 | v1 |
+| [superpowers/specs/2026-11-05-S1-消息与内容模型-design.md](superpowers/specs/2026-11-05-S1-消息与内容模型-design.md) | S1 实现设计 spec（pi 原版 → pi.net → Unity/2.1 → 最小偏离） | 待 review |
 | [learning/](learning/README.md) | 教学与心智模型：导读、Q&A、逐阶段教学篇 | 骨架 |
 | [learning/REFERENCES.md](learning/REFERENCES.md) | pi 教学项目逐章参考索引（按 S0–S13） | v1 |
 | [../PORTING.md](../PORTING.md) | 上游文件 → PiUnityAgent 的逐文件映射与版本卡 | 骨架 |
