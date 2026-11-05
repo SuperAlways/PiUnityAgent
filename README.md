@@ -78,7 +78,12 @@ unity-game-ai-mod-pi-agent-core/
 ├─ README.md
 ├─ docs/
 │  ├─ 00-项目定位与边界.md
-│  └─ 01-调研简报-CSharp生态.md
+│  ├─ 01-调研简报-CSharp生态.md
+│  ├─ 02-Pi.NET复用评估.md
+│  └─ 03-开发方法-拆解学习与移植约定.md
+├─ sop/
+│  ├─ README.md
+│  └─ 01-GitHub推送与代理配置-2026-11-05.md
 ├─ src/
 │  ├─ PiAgent.Core/          # netstandard2.1 纯逻辑（待建）
 │  ├─ PiAgent.Hosts.Unity/   # Unity 宿主适配（待建）
