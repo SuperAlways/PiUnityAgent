@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PiUnityAgent.Ai/PiUnityAgent.Ai.csproj" />
+    <Project Path="src/PiUnityAgent.Core/PiUnityAgent.Core.csproj" />
+    <Project Path="src/PiUnityAgent.Runtime/PiUnityAgent.Runtime.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PiUnityAgent.Ai.Tests/PiUnityAgent.Ai.Tests.csproj" />
+    <Project Path="tests/PiUnityAgent.Core.Tests/PiUnityAgent.Core.Tests.csproj" />
+  </Folder>
+</Solution>

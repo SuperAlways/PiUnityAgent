@@ -54,3 +54,19 @@ Pi.NET 的价值是"同一 TS 特性在 C# 里怎么写"的参考，以及它踩
 M1 的目标是"最小可用 agent"：循环、工具、流式、可挂 Unity。
 Session/Compaction 属于 2A，晚一点加不会阻碍 M1 验证；先做会让第一里程碑变重、变慢。
 但 M1 的接口要预留（`IToolExecutor`、事件流、消息列表可替换），避免 2A 返工。
+
+## Q9. 为什么 `SystemMessage` / `UserMessage` 不做一个 `string | blocks` 的 union 类型？
+
+C# 没有 TS 的 discriminated union。S1 用了两个可空字段（`Content` / `ContentBlocks`）+ `MessageValidation`，要求恰好设置一个。
+
+- 好处：构造直观，不需要为每条消息套一层包装；
+- 代价：类型系统不强制，必须在校验/边界处调用 `Validate`；
+- 备选：定义 `MessageContent` 抽象（string 或 blocks），类型更严格但多一层包装。S1 先不引入，等真实调用点觉得别扭再改。
+
+## Q10. 为什么 `ToolResultMessage` 不做成泛型？
+
+上游的 `ToolResultMessage<TDetails>` 是条件类型，保证 `details` 可 JSON 序列化。C# 里这属于编译期约束，S1 先用 `JsonNode? Details`：
+
+- 足够表达任意 JSON 结构；
+- 避免每个工具定义都带一个泛型参数；
+- 需要强类型工具结果时，可在工具层做 `JsonSerializer.Deserialize<T>`，不污染消息类型。
