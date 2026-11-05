@@ -25,6 +25,7 @@ public class MessageTypesTests
     {
         var message = new AssistantMessage
         {
+            Timestamp = 0,
             Api = "anthropic-messages",
             Provider = "anthropic",
             Model = "claude-sonnet-4-5",
@@ -97,38 +98,32 @@ public class MessageTypesTests
     }
 
     [Fact]
-    public void SystemMessage_Requires_Exactly_One_Content_Form()
+    public void SystemMessage_Uses_MessageContent()
     {
-        MessageValidation.Validate(new SystemMessage { Content = "base prompt" });
-        MessageValidation.Validate(new SystemMessage
+        var message = new SystemMessage
         {
-            ContentBlocks = new[] { new TextContent { Text = "base prompt" } },
-        });
+            Content = MessageContent.From("base prompt"),
+            Timestamp = 1,
+        };
 
-        Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new SystemMessage()));
-        Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new SystemMessage
-        {
-            Content = "text",
-            ContentBlocks = new[] { new TextContent { Text = "blocks" } },
-        }));
+        Assert.Equal("system", message.Role);
+        Assert.Equal("base prompt", ((MessageContent.Text)message.Content).Value);
     }
 
     [Fact]
-    public void UserMessage_Allows_Text_And_Image_But_Not_ToolCall()
+    public void UserMessage_Uses_MessageContent_And_Validates_Blocks()
     {
-        MessageValidation.Validate(new UserMessage
+        var message = new UserMessage
         {
-            ContentBlocks = new ContentBlock[]
+            Content = MessageContent.From(new ContentBlock[]
             {
                 new TextContent { Text = "look" },
                 new ImageContent { Data = "AAAA", MimeType = "image/png" },
-            },
-        });
+            }),
+            Timestamp = 2,
+        };
 
-        Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new UserMessage
-        {
-            ContentBlocks = new ContentBlock[] { new ToolCall { Id = "c", Name = "x" } },
-        }));
+        MessageValidation.Validate(message);
     }
 
     [Fact]
@@ -136,6 +131,7 @@ public class MessageTypesTests
     {
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new AssistantMessage
         {
+            Timestamp = 0,
             Content = new ContentBlock[] { new ImageContent { Data = "AAAA", MimeType = "image/png" } },
         }));
     }
@@ -145,6 +141,7 @@ public class MessageTypesTests
     {
         MessageValidation.Validate(new ToolResultMessage
         {
+            Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "query_hp",
             Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
@@ -152,11 +149,13 @@ public class MessageTypesTests
 
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new ToolResultMessage
         {
+            Timestamp = 0,
             ToolName = "query_hp",
         }));
 
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new ToolResultMessage
         {
+            Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "query_hp",
             Content = new ContentBlock[] { new ThinkingContent { Thinking = "nope" } },
@@ -168,18 +167,20 @@ public class MessageTypesTests
     {
         var assistant = new AssistantMessage
         {
+            Timestamp = 0,
             Content = new ContentBlock[] { new ToolCall { Id = "call_1", Name = "query_hp" } },
         };
 
         MessageValidation.ValidateToolPair(assistant, new ToolResultMessage
         {
+            Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "query_hp",
         });
 
         Assert.Throws<InvalidOperationException>(() => MessageValidation.ValidateToolPair(
             assistant,
-            new ToolResultMessage { ToolCallId = "call_2", ToolName = "query_hp" }));
+            new ToolResultMessage { Timestamp = 0, ToolCallId = "call_2", ToolName = "query_hp" }));
     }
 
     [Fact]

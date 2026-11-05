@@ -12,13 +12,11 @@ public static class MessageValidation
         switch (message)
         {
             case SystemMessage system:
-                RequireExactlyOne(system.Content, system.ContentBlocks, nameof(SystemMessage));
-                RequireBlocks(system.ContentBlocks, nameof(SystemMessage), b => b is TextContent);
+                RequireBlocks(system.Content.ToBlocks(), nameof(SystemMessage), b => b is TextContent);
                 break;
 
             case UserMessage user:
-                RequireExactlyOne(user.Content, user.ContentBlocks, nameof(UserMessage));
-                RequireBlocks(user.ContentBlocks, nameof(UserMessage), b => b is TextContent || b is ImageContent);
+                RequireBlocks(user.Content.ToBlocks(), nameof(UserMessage), b => b is TextContent || b is ImageContent);
                 break;
 
             case AssistantMessage assistant:
@@ -48,16 +46,6 @@ public static class MessageValidation
         {
             throw new InvalidOperationException(
                 $"ToolResultMessage.ToolCallId '{result.ToolCallId}' does not match any ToolCall in the assistant message.");
-        }
-    }
-
-    private static void RequireExactlyOne<T>(string? text, IReadOnlyList<T>? blocks, string owner)
-    {
-        var hasText = text is not null;
-        var hasBlocks = blocks is not null;
-        if (hasText == hasBlocks)
-        {
-            throw new ArgumentException($"{owner} must set exactly one of Content or ContentBlocks.");
         }
     }
 

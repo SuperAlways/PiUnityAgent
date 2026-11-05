@@ -7,5 +7,5 @@ public abstract record Message
     public abstract string Role { get; }
 
     /// <summary>Unix timestamp in milliseconds.</summary>
-    public long Timestamp { get; init; }
+    public required long Timestamp { get; init; }
 }

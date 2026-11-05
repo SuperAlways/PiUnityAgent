@@ -10,6 +10,7 @@ public class OptionalTypesTests
     {
         var message = new AssistantMessage
         {
+            Timestamp = 0,
             Deferred = new DeferredHandle
             {
                 Provider = "openai",
@@ -46,6 +47,7 @@ public class OptionalTypesTests
     {
         var message = new ToolResultMessage
         {
+            Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "codemode",
             NestedCalls = new NestedToolCalls

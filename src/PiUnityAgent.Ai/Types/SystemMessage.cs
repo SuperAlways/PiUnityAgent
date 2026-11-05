@@ -5,11 +5,8 @@ public sealed record SystemMessage : Message
 {
     public override string Role => "system";
 
-    /// <summary>Instruction text. Mutually exclusive with ContentBlocks.</summary>
-    public string? Content { get; init; }
-
-    /// <summary>Instruction text as blocks. Mutually exclusive with Content.</summary>
-    public IReadOnlyList<TextContent>? ContentBlocks { get; init; }
+    /// <summary>Instruction text or blocks.</summary>
+    public required MessageContent Content { get; init; }
 
     /// <summary>Named prompt sections; null removes a section.</summary>
     public IReadOnlyDictionary<string, string?>? Sections { get; init; }

@@ -5,9 +5,6 @@ public sealed record UserMessage : Message
 {
     public override string Role => "user";
 
-    /// <summary>Plain text content. Mutually exclusive with ContentBlocks.</summary>
-    public string? Content { get; init; }
-
-    /// <summary>Text and/or image blocks. Mutually exclusive with Content.</summary>
-    public IReadOnlyList<ContentBlock>? ContentBlocks { get; init; }
+    /// <summary>Text or text/image blocks.</summary>
+    public required MessageContent Content { get; init; }
 }
