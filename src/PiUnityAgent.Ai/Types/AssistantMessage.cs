@@ -20,5 +20,5 @@ public sealed record AssistantMessage : Message
     public string? ErrorMessage { get; init; }
     public string? RawStopReason { get; init; }
     public bool? EndTurn { get; init; }
-    public int? DurationMs { get; init; }
+    public int? DurationMs { get; set; }
 }
