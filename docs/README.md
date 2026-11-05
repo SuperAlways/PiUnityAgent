@@ -14,6 +14,7 @@
 | [superpowers/specs/2026-11-05-S2-流式事件协议-design.md](superpowers/specs/2026-11-05-S2-流式事件协议-design.md) | S2 流式事件协议 spec（事件类型、EventStream、partial/终态/计时） | 讨论稿 v0.1 |
 | [superpowers/plans/2026-11-05-S2-流式事件协议.md](superpowers/plans/2026-11-05-S2-流式事件协议.md) | S2 实现计划（EventStream/事件类型/流容器/门禁） | 待执行 |
 | [superpowers/specs/2026-11-05-S3-Provider抽象与Faux-design.md](superpowers/specs/2026-11-05-S3-Provider抽象与Faux-design.md) | S3 Provider 抽象 + Faux spec（Model/Models/StreamFn/Faux） | 讨论稿 v0.1 |
+| [superpowers/plans/2026-11-05-S3-Provider抽象与Faux.md](superpowers/plans/2026-11-05-S3-Provider抽象与Faux.md) | S3 实现计划（Model/Provider/Models/Faux/门禁） | 待执行 |
 | [learning/](learning/README.md) | 教学与心智模型：导读、Q&A、逐阶段教学篇 | 骨架 |
 | [learning/REFERENCES.md](learning/REFERENCES.md) | pi 教学项目逐章参考索引（按 S0–S13） | v1 |
 | [../PORTING.md](../PORTING.md) | 上游文件 → PiUnityAgent 的逐文件映射与版本卡 | 骨架 |
