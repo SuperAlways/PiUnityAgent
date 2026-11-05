@@ -245,9 +245,9 @@ public class MessageTypesTests
     }
 
     [Fact]
-    public void Context_Defaults_Are_Empty()
+    public void Context_Requires_Messages()
     {
-        var context = new Context();
+        var context = new Context { Messages = Array.Empty<Message>() };
 
         Assert.Empty(context.Messages);
         Assert.Null(context.Tools);

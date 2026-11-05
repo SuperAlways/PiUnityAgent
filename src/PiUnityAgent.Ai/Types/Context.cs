@@ -5,7 +5,7 @@ public sealed record Context
 {
     public string? SystemPrompt { get; init; }
 
-    public IReadOnlyList<Message> Messages { get; init; } = Array.Empty<Message>();
+    public required IReadOnlyList<Message> Messages { get; init; }
 
     public IReadOnlyList<Tool>? Tools { get; init; }
 }
@@ -16,5 +16,5 @@ public sealed record Context
 /// </summary>
 public sealed record TranscriptContext
 {
-    public IReadOnlyList<Message> Messages { get; init; } = Array.Empty<Message>();
+    public required IReadOnlyList<Message> Messages { get; init; }
 }
