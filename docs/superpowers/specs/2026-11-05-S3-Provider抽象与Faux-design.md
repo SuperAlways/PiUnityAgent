@@ -252,7 +252,7 @@ public sealed class SystemClock : IClock
 public abstract record FauxResponseStep
 {
     public sealed record Response(AssistantMessage Message) : FauxResponseStep;
-    public sealed record Factory(FauxResponseFactory Factory) : FauxResponseStep;
+    public sealed record Factory(FauxResponseFactory Create) : FauxResponseStep; // C# 不允许成员与类型同名
 }
 
 public delegate Task<AssistantMessage> FauxResponseFactory(

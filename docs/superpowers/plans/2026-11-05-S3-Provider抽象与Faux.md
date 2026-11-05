@@ -620,7 +620,7 @@ public delegate Task<AssistantMessage> FauxResponseFactory(
 public abstract record FauxResponseStep
 {
     public sealed record Response(AssistantMessage Message) : FauxResponseStep;
-    public sealed record Factory(FauxResponseFactory Factory) : FauxResponseStep;
+    public sealed record Factory(FauxResponseFactory Create) : FauxResponseStep; // C# 不允许成员与类型同名
 }
 ```
 
@@ -744,7 +744,7 @@ public sealed class FauxProvider
             AssistantMessage message;
             if (step is FauxResponseStep.Factory factory)
             {
-                message = await factory.Factory(context, options, _state, model).ConfigureAwait(false);
+                message = await factory.Create(context, options, _state, model).ConfigureAwait(false);
             }
             else
             {
