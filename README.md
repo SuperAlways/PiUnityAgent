@@ -76,14 +76,17 @@
 ```
 PiUnityAgent/
 ├─ README.md
+├─ PORTING.md                    # 上游文件 → 我们的文件映射 + 版本卡
 ├─ docs/
 │  ├─ 00-项目定位与边界.md
 │  ├─ 01-调研简报-CSharp生态.md
 │  ├─ 02-Pi.NET复用评估.md
-│  └─ 03-开发方法-拆解学习与移植约定.md
+│  ├─ 03-开发方法-拆解学习与移植约定.md
+│  └─ learning/                  # 教学与心智模型（导读/Q&A/逐模块）
 ├─ sop/
 │  ├─ README.md
-│  └─ 01-GitHub推送与代理配置-2026-11-05.md
+│  ├─ 01-GitHub推送与代理配置-2026-11-05.md
+│  └─ 02-参考源同步-2026-11-05.md
 ├─ src/
 │  ├─ PiUnityAgent.Ai/            # pi-ai 子集：消息/流式/工具/provider
 │  ├─ PiUnityAgent.Core/          # pi-agent-core：循环/状态/工具执行
