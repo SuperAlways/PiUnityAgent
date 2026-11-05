@@ -87,6 +87,24 @@ public class MessageTypesTests
     }
 
     [Fact]
+    public void ToolResultMessage_Serializes_Details()
+    {
+        var message = new ToolResultMessage
+        {
+            ToolCallId = "call_1",
+            ToolName = "query_hp",
+            Content = Array.Empty<ContentBlock>(),
+            IsError = false,
+            Details = new { hp = 80 },
+            Timestamp = 4,
+        };
+
+        var json = JsonSerializer.Serialize(message, JsonOptions);
+
+        Assert.Contains("\"details\":{\"hp\":80}", json);
+    }
+
+    [Fact]
     public void ToolCall_Serializes_Arguments_And_ArgumentsError()
     {
         var call = new ToolCall

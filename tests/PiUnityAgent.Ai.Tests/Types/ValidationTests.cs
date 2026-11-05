@@ -18,6 +18,30 @@ public class ValidationTests
     }
 
     [Fact]
+    public void UserMessage_Rejects_ToolCall_Blocks()
+    {
+        var message = new UserMessage
+        {
+            Content = MessageContent.From(new ContentBlock[] { new ToolCall { Id = "c", Name = "x" } }),
+            Timestamp = 3,
+        };
+
+        Assert.Throws<ArgumentException>(() => MessageValidation.Validate(message));
+    }
+
+    [Fact]
+    public void SystemMessage_Rejects_Image_Blocks()
+    {
+        var message = new SystemMessage
+        {
+            Content = MessageContent.From(new ContentBlock[] { new ImageContent { Data = "AAAA", MimeType = "image/png" } }),
+            Timestamp = 4,
+        };
+
+        Assert.Throws<ArgumentException>(() => MessageValidation.Validate(message));
+    }
+
+    [Fact]
     public void ToolPair_Requires_Matching_Call()
     {
         var assistant = new AssistantMessage

@@ -40,4 +40,11 @@ public class ContentBlockTests
         Assert.Contains("\"type\":\"thinking\"", json);
         Assert.Contains("\"thinkingSignature\":\"sig\"", json);
     }
+
+    [Fact]
+    public void ContentBlock_Unknown_Discriminator_Throws()
+    {
+        Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<ContentBlock>("{\"type\":\"bogus\"}", Options));
+    }
 }
