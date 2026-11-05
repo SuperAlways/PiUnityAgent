@@ -12,10 +12,10 @@
 | `Usage` / `cost` | `Usage.cs`（`Usage` + `UsageCost`） | 嵌套 cost 拆成 record |
 | `StopReason` | `StopReason.cs` | 字面量联合 → enum + `ToWire/FromWire` |
 | `Tool` / `ToolReference` | `Tool.cs` | 同名 record |
-| `SystemMessage` | `SystemMessage.cs` | `content: string \| TextContent[]` → `Content` / `ContentBlocks` 二选一 |
-| `UserMessage` | `UserMessage.cs` | `content: string \| (Text \| Image)[]` → `Content` / `ContentBlocks` 二选一 |
+| `SystemMessage` | `SystemMessage.cs` | `content: string \| TextContent[]` → `required MessageContent`；`Type` 不参与 JSON |
+| `UserMessage` | `UserMessage.cs` | `content: string \| (Text \| Image)[]` → `required MessageContent` |
 | `AssistantMessage` | `AssistantMessage.cs` | 内容块联合 → `IReadOnlyList<ContentBlock>` + 运行时校验 |
-| `ToolResultMessage` | `ToolResultMessage.cs` | 条件泛型 → 非泛型 + `JsonNode? Details` |
+| `ToolResultMessage` | `ToolResultMessage.cs` | 条件泛型 → 非泛型 + `object? Details`；必填字段用 `required` |
 | `Context` | `Context.cs` | 同名 record |
 | `TranscriptContext` | `Context.cs` | 同名 record（无 branded type） |
 | `Message` 联合 | `Message.cs` + 派生 record | `MessageValidation` 负责运行时不变量 |
@@ -24,6 +24,12 @@
 | `ImagesContext` / `ImagesStopReason` / `AssistantImages` | `ImagesTypes.cs` | 输入/输出用 `IImagesInputContent` / `IImagesOutputContent` |
 | `Classifier*` | `ClassifierTypes.cs` | question/answer 联合 → 抽象 record |
 | `NestedToolCallRecord` / `NestedToolCalls` | `NestedToolCalls.cs` | status 用 enum |
+
+## 已验证的 2.1 适配
+
+- `JsonPolymorphic`/`JsonDerivedType` 在 netstandard2.1 + STJ 8.0.5 可编译；
+- `ContentBlock.Type` 必须 `[JsonIgnore]`，否则与 `type` 判别符冲突；
+- `required` 通过 `RequiredMemberAttribute` 等 polyfill 支持。
 
 ## 保留但暂不使用的上游字段
 

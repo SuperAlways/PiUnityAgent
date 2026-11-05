@@ -26,11 +26,11 @@
 
 ## 1. M1 · PiUnityAgent.Ai（pi-ai 子集）
 
-> **S1 状态（2026-11-05）**：✅ 消息/内容/usage/stopReason + deferred/diagnostics/images/classifier/nested 类型 + 14 条单测；事件流与 Model 目录待 S2+。详见 `docs/learning/S1-消息与内容模型.md`。
+> **S1 状态（2026-11-05）**：✅ 消息/内容/usage/stopReason + deferred/diagnostics/images/classifier/nested 类型已按 spec 返工完成（70 条单测）；事件流与 Model 目录待 S2+。详见 `docs/learning/S1-消息与内容模型.md`。
 
 | 上游文件 | 我们的文件 | 状态 | 偏离说明 |
 |---|---|---|---|
-| `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | 🟡 | S1 已完成消息/内容/usage/stopReason + deferred/diagnostics/images/classifier/nested 类型；事件/Model 待 S2+；`Types/_mapping.md` 保留原类型名 |
+| `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 按 spec 返工完成：MessageContent、ContentBlock 多态、required、枚举 converter、可选类型；事件/Model 待 S2+ |
 | `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/AssistantMessageEventStream.cs` | ⬜ | `AsyncIterable` → `IAsyncEnumerable` |
 | `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Context/Transcript.cs` | ⬜ | `normalizeContext` 保留语义 |
 | `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Reliability/Retry.cs` | ⬜ | 指数退避 + 抖动 |
