@@ -29,6 +29,7 @@ public class MessageTypesTests
             Api = "anthropic-messages",
             Provider = "anthropic",
             Model = "claude-sonnet-4-5",
+            Usage = new Usage(),
             StopReason = StopReason.ToolUse,
             Content = new ContentBlock[]
             {
@@ -48,6 +49,41 @@ public class MessageTypesTests
         Assert.Contains(message.Content, block => block is TextContent);
         Assert.Contains(message.Content, block => block is ThinkingContent);
         Assert.Contains(message.Content, block => block is ToolCall);
+    }
+
+    [Fact]
+    public void AssistantMessage_Requires_Core_Fields()
+    {
+        var message = new AssistantMessage
+        {
+            Content = new ContentBlock[] { new TextContent { Text = "ok" } },
+            Api = "anthropic-messages",
+            Provider = "anthropic",
+            Model = "claude-sonnet-4-5",
+            Usage = new Usage { TotalTokens = 10 },
+            StopReason = StopReason.Stop,
+            Timestamp = 3,
+        };
+
+        Assert.Equal("assistant", message.Role);
+        Assert.Equal(10, message.Usage.TotalTokens);
+    }
+
+    [Fact]
+    public void ToolResultMessage_Uses_Object_Details()
+    {
+        var message = new ToolResultMessage
+        {
+            ToolCallId = "call_1",
+            ToolName = "query_hp",
+            Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
+            IsError = false,
+            Details = new { hp = 80 },
+            Timestamp = 4,
+        };
+
+        Assert.False(message.IsError);
+        Assert.NotNull(message.Details);
     }
 
     [Fact]
@@ -132,6 +168,11 @@ public class MessageTypesTests
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new AssistantMessage
         {
             Timestamp = 0,
+            Api = "anthropic-messages",
+            Provider = "anthropic",
+            Model = "claude-sonnet-4-5",
+            Usage = new Usage(),
+            StopReason = StopReason.Stop,
             Content = new ContentBlock[] { new ImageContent { Data = "AAAA", MimeType = "image/png" } },
         }));
     }
@@ -145,12 +186,17 @@ public class MessageTypesTests
             ToolCallId = "call_1",
             ToolName = "query_hp",
             Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
+            IsError = false,
         });
 
+        // Omitting ToolCallId is now a compile-time error (required); an empty id is still caught at runtime.
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new ToolResultMessage
         {
             Timestamp = 0,
+            ToolCallId = "",
             ToolName = "query_hp",
+            Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
+            IsError = false,
         }));
 
         Assert.Throws<ArgumentException>(() => MessageValidation.Validate(new ToolResultMessage
@@ -159,6 +205,7 @@ public class MessageTypesTests
             ToolCallId = "call_1",
             ToolName = "query_hp",
             Content = new ContentBlock[] { new ThinkingContent { Thinking = "nope" } },
+            IsError = false,
         }));
     }
 
@@ -168,6 +215,11 @@ public class MessageTypesTests
         var assistant = new AssistantMessage
         {
             Timestamp = 0,
+            Api = "anthropic-messages",
+            Provider = "anthropic",
+            Model = "claude-sonnet-4-5",
+            Usage = new Usage(),
+            StopReason = StopReason.ToolUse,
             Content = new ContentBlock[] { new ToolCall { Id = "call_1", Name = "query_hp" } },
         };
 
@@ -176,11 +228,20 @@ public class MessageTypesTests
             Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "query_hp",
+            Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
+            IsError = false,
         });
 
         Assert.Throws<InvalidOperationException>(() => MessageValidation.ValidateToolPair(
             assistant,
-            new ToolResultMessage { Timestamp = 0, ToolCallId = "call_2", ToolName = "query_hp" }));
+            new ToolResultMessage
+            {
+                Timestamp = 0,
+                ToolCallId = "call_2",
+                ToolName = "query_hp",
+                Content = new ContentBlock[] { new TextContent { Text = "hp=80" } },
+                IsError = false,
+            }));
     }
 
     [Fact]

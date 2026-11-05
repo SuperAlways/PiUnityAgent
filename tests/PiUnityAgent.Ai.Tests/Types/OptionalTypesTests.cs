@@ -11,6 +11,12 @@ public class OptionalTypesTests
         var message = new AssistantMessage
         {
             Timestamp = 0,
+            Api = "anthropic-messages",
+            Provider = "anthropic",
+            Model = "claude-sonnet-4-5",
+            Usage = new Usage(),
+            StopReason = StopReason.Stop,
+            Content = Array.Empty<ContentBlock>(),
             Deferred = new DeferredHandle
             {
                 Provider = "openai",
@@ -50,6 +56,8 @@ public class OptionalTypesTests
             Timestamp = 0,
             ToolCallId = "call_1",
             ToolName = "codemode",
+            Content = Array.Empty<ContentBlock>(),
+            IsError = false,
             NestedCalls = new NestedToolCalls
             {
                 Complete = false,
