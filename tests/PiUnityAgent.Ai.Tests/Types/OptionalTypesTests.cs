@@ -51,6 +51,7 @@ public class OptionalTypesTests
     [Fact]
     public void NestedToolCalls_Are_Present()
     {
+        var details = new { kind = "batch" };
         var message = new ToolResultMessage
         {
             Timestamp = 0,
@@ -58,6 +59,7 @@ public class OptionalTypesTests
             ToolName = "codemode",
             Content = Array.Empty<ContentBlock>(),
             IsError = false,
+            Details = details,
             NestedCalls = new NestedToolCalls
             {
                 Complete = false,
@@ -78,6 +80,7 @@ public class OptionalTypesTests
         Assert.False(message.NestedCalls.Complete);
         Assert.Single(message.NestedCalls.Calls);
         Assert.Equal(NestedToolCallStatus.Ok, message.NestedCalls.Calls[0].Status);
+        Assert.Same(details, message.Details);
     }
 
     [Fact]
