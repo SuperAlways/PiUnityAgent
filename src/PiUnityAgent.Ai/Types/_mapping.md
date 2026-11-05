@@ -19,11 +19,18 @@
 | `Context` | `Context.cs` | 同名 record |
 | `TranscriptContext` | `Context.cs` | 同名 record（无 branded type） |
 | `Message` 联合 | `Message.cs` + 派生 record | `MessageValidation` 负责运行时不变量 |
+| `AssistantMessageDiagnostic` / `DiagnosticErrorInfo` | `AssistantMessageDiagnostic.cs` | 同名 record；`code` 用 `JsonNode` |
+| `DeferredHandle` | `DeferredHandle.cs` | 同名 record |
+| `ImagesContext` / `ImagesStopReason` / `AssistantImages` | `ImagesTypes.cs` | 输入/输出用 `IImagesInputContent` / `IImagesOutputContent` |
+| `Classifier*` | `ClassifierTypes.cs` | question/answer 联合 → 抽象 record |
+| `NestedToolCallRecord` / `NestedToolCalls` | `NestedToolCalls.cs` | status 用 enum |
 
 ## 保留但暂不使用的上游字段
 
 `TextSignature`、`ThinkingSignature`、`ThoughtSignature`、`Namespace`、`CacheWrite1h`、`Reasoning`、`RawStopReason`、`EndTurn`、`DurationMs`、`ConstrainedSampling`。
 
-## 暂不移植
+## 类型保留、实现后置（A 方案）
 
-`ImagesContext`、`ImagesOutputContent`、`ClassifierContext`、`NestedToolCalls`、`DeferredHandle`、`AssistantMessageEvent`（S2）、provider 专属字段（后续按需补）。
+`ImagesContext`、`ImagesOutputContent`、`ClassifierContext`、`NestedToolCalls`、`DeferredHandle`、`AssistantMessageDiagnostic` 已保留类型；未实现的部分标 `TODO` / `NotSupportedException`，不删除、不改语义。
+
+`AssistantMessageEvent` 属于 S2；provider 专属字段按 provider 阶段补齐。

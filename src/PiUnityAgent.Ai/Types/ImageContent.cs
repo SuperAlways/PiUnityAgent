@@ -1,7 +1,7 @@
 namespace PiUnityAgent.Ai.Types;
 
 /// <summary>A base64-encoded image block.</summary>
-public sealed record ImageContent : ContentBlock
+public sealed record ImageContent : ContentBlock, IImagesInputContent, IImagesOutputContent
 {
     public override string Type => "image";
 

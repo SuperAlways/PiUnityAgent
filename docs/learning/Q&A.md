@@ -70,3 +70,14 @@ C# 没有 TS 的 discriminated union。S1 用了两个可空字段（`Content` /
 - 足够表达任意 JSON 结构；
 - 避免每个工具定义都带一个泛型参数；
 - 需要强类型工具结果时，可在工具层做 `JsonSerializer.Deserialize<T>`，不污染消息类型。
+
+## Q11. 为什么 A 方案"不砍能力"？
+
+因为项目要求是"**可以用不到，但不能没有**"：pi-ai / pi-agent-core 的公共类型、API、能力面必须完整，哪怕是图片生成、分类、OAuth、42 家 provider 这些游戏 mod 暂时用不到的部分。
+
+处理方式是：
+
+- **类型/契约先完整**；
+- **实现按阶段推进**，未实现部分标 `TODO` / `NotSupportedException`；
+- 不删除类型、不改语义；
+- 只有不属于这两个包的东西（CLI/TUI、bash/文件工具、project trust 等）才真正不移植。

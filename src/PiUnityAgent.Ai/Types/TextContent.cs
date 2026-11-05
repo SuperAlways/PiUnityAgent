@@ -1,7 +1,7 @@
 namespace PiUnityAgent.Ai.Types;
 
 /// <summary>A text block in a message.</summary>
-public sealed record TextContent : ContentBlock
+public sealed record TextContent : ContentBlock, IImagesInputContent, IImagesOutputContent
 {
     public override string Type => "text";
 

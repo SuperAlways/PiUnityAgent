@@ -26,6 +26,12 @@ public sealed record AssistantMessage : Message
 
     public Usage Usage { get; init; } = new();
 
+    /// <summary>Redacted provider/runtime diagnostics for failures and recoveries.</summary>
+    public IReadOnlyList<AssistantMessageDiagnostic>? Diagnostics { get; init; }
+
+    /// <summary>Handle for a deferred response that is fetched later.</summary>
+    public DeferredHandle? Deferred { get; init; }
+
     public StopReason StopReason { get; init; } = StopReason.Pending;
 
     public string? ErrorMessage { get; init; }

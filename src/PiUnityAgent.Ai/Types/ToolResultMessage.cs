@@ -18,6 +18,9 @@ public sealed record ToolResultMessage : Message
     /// <summary>Non-model-facing structured details for UI/logs.</summary>
     public JsonNode? Details { get; init; }
 
+    /// <summary>Calls this tool made to other tools. Kept for the session record; not sent to the model.</summary>
+    public NestedToolCalls? NestedCalls { get; init; }
+
     /// <summary>Usage from the tool execution itself, when available.</summary>
     public Usage? Usage { get; init; }
 
