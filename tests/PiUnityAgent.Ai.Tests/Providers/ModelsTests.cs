@@ -119,4 +119,22 @@ public class ModelsTests
         Assert.Equal(StopReason.Error, done.StopReason);
         Assert.Contains("Unknown provider", done.ErrorMessage);
     }
+
+    [Fact]
+    public async Task StreamSimple_Provider_Throws_Returns_Error_Event()
+    {
+        var models = new Models();
+        models.SetProvider(CreateProvider(stream: (model, context, options, ct) =>
+            throw new InvalidOperationException("boom")));
+
+        var stream = await models.StreamSimpleAsync(
+            CreateModel(),
+            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
+            null,
+            CancellationToken.None);
+        var done = await stream.WaitForDoneAsync();
+
+        Assert.Equal(StopReason.Error, done.StopReason);
+        Assert.Contains("boom", done.ErrorMessage);
+    }
 }
