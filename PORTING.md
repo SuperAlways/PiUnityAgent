@@ -31,7 +31,7 @@
 | 上游文件 | 我们的文件 | 状态 | 偏离说明 |
 |---|---|---|---|
 | `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 按 spec 返工完成：MessageContent、ContentBlock 多态、required、枚举 converter、可选类型；事件/Model 待 S2+ |
-| `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/AssistantMessageEventStream.cs` | ⬜ | `AsyncIterable` → `IAsyncEnumerable` |
+| `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/*` | ✅ | S2 完成：12 事件 + EventStream + AssistantMessageEventStream；单消费者 |
 | `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Context/Transcript.cs` | ⬜ | `normalizeContext` 保留语义 |
 | `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Reliability/Retry.cs` | ⬜ | 指数退避 + 抖动 |
 | `packages/ai/src/utils/estimate.ts` | `src/PiUnityAgent.Ai/Tokens/Estimate.cs` | ⬜ | 粗略 token 估算 |
