@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using PiUnityAgent.Ai.Events;
 using PiUnityAgent.Ai.Types;
 
@@ -204,15 +205,37 @@ public sealed class FauxProvider
         AssistantMessage final,
         CancellationToken cancellationToken)
     {
-        // Task 3 implements the streaming details.
-        cancellationToken.ThrowIfCancellationRequested();
+        var partial = final with
+        {
+            Content = Array.Empty<ContentBlock>(),
+            StopReason = StopReason.Pending,
+        };
+        stream.Push(new AssistantMessageEvent.Start(partial));
+
+        var built = new List<ContentBlock>();
+        foreach (var block in final.Content)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            switch (block)
+            {
+                case TextContent text:
+                    await EmitTextAsync(stream, final, built, text, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ThinkingContent thinking:
+                    await EmitThinkingAsync(stream, final, built, thinking, cancellationToken).ConfigureAwait(false);
+                    break;
+                case ToolCall call:
+                    await EmitToolCallAsync(stream, final, built, call, cancellationToken).ConfigureAwait(false);
+                    break;
+            }
+        }
+
         if (final.StopReason is StopReason.Error or StopReason.Aborted)
         {
             stream.Push(new AssistantMessageEvent.Error(final.StopReason, final));
             stream.End(final);
             return;
         }
-
         if (final.StopReason == StopReason.Pending)
         {
             EmitError(stream, final, "Faux response ended without a stop reason");
@@ -221,6 +244,89 @@ public sealed class FauxProvider
 
         stream.Push(new AssistantMessageEvent.Done(final.StopReason, final));
         stream.End(final);
-        await Task.CompletedTask;
     }
+
+    private async Task EmitTextAsync(
+        AssistantMessageEventStream stream,
+        AssistantMessage final,
+        List<ContentBlock> built,
+        TextContent block,
+        CancellationToken cancellationToken)
+    {
+        var index = built.Count;
+        var current = new TextContent { Text = string.Empty };
+        stream.Push(new AssistantMessageEvent.TextStart(index, Partial(final, built, current)));
+        foreach (var chunk in Chunk(block.Text))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await DelayAsync(cancellationToken).ConfigureAwait(false);
+            current = current with { Text = current.Text + chunk };
+            stream.Push(new AssistantMessageEvent.TextDelta(index, chunk, Partial(final, built, current)));
+        }
+        stream.Push(new AssistantMessageEvent.TextEnd(index, current.Text, Partial(final, built, current)));
+        built.Add(current);
+    }
+
+    private async Task EmitThinkingAsync(
+        AssistantMessageEventStream stream,
+        AssistantMessage final,
+        List<ContentBlock> built,
+        ThinkingContent block,
+        CancellationToken cancellationToken)
+    {
+        var index = built.Count;
+        var current = new ThinkingContent { Thinking = string.Empty, ThinkingSignature = block.ThinkingSignature, Redacted = block.Redacted };
+        stream.Push(new AssistantMessageEvent.ThinkingStart(index, Partial(final, built, current)));
+        foreach (var chunk in Chunk(block.Thinking))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await DelayAsync(cancellationToken).ConfigureAwait(false);
+            current = current with { Thinking = current.Thinking + chunk };
+            stream.Push(new AssistantMessageEvent.ThinkingDelta(index, chunk, Partial(final, built, current)));
+        }
+        stream.Push(new AssistantMessageEvent.ThinkingEnd(index, current.Thinking, Partial(final, built, current)));
+        built.Add(current);
+    }
+
+    private async Task EmitToolCallAsync(
+        AssistantMessageEventStream stream,
+        AssistantMessage final,
+        List<ContentBlock> built,
+        ToolCall block,
+        CancellationToken cancellationToken)
+    {
+        var index = built.Count;
+        var current = block with { Arguments = new JsonObject() };
+        stream.Push(new AssistantMessageEvent.ToolCallStart(index, Partial(final, built, current)));
+        foreach (var chunk in Chunk(block.Arguments.ToJsonString()))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await DelayAsync(cancellationToken).ConfigureAwait(false);
+            stream.Push(new AssistantMessageEvent.ToolCallDelta(index, chunk, Partial(final, built, current)));
+        }
+        stream.Push(new AssistantMessageEvent.ToolCallEnd(index, block, Partial(final, built, block)));
+        built.Add(block);
+    }
+
+    private AssistantMessage Partial(
+        AssistantMessage final,
+        List<ContentBlock> built,
+        ContentBlock current)
+        => final with
+        {
+            Content = built.Concat(new[] { current }).ToArray(),
+            StopReason = StopReason.Pending,
+        };
+
+    private IEnumerable<string> Chunk(string text)
+    {
+        var size = Math.Max(1, Math.Min(_options.MinTokenSize, _options.MaxTokenSize));
+        for (var i = 0; i < text.Length; i += size)
+            yield return text.Substring(i, Math.Min(size, text.Length - i));
+    }
+
+    private Task DelayAsync(CancellationToken cancellationToken)
+        => _options.TokensPerSecond <= 0
+            ? Task.CompletedTask
+            : Task.Delay(TimeSpan.FromMilliseconds(1000.0 / _options.TokensPerSecond), cancellationToken);
 }
