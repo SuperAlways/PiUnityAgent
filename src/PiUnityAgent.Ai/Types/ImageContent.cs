@@ -1,8 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace PiUnityAgent.Ai.Types;
 
 /// <summary>A base64-encoded image block.</summary>
 public sealed record ImageContent : ContentBlock, IImagesInputContent, IImagesOutputContent
 {
+    [JsonIgnore]
     public override string Type => "image";
 
     public string Data { get; init; } = string.Empty;

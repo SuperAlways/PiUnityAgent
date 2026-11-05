@@ -1,8 +1,15 @@
+using System.Text.Json.Serialization;
+
 namespace PiUnityAgent.Ai.Types;
 
-/// <summary>Base type for content blocks carried by messages.</summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(TextContent), "text")]
+[JsonDerivedType(typeof(ThinkingContent), "thinking")]
+[JsonDerivedType(typeof(ImageContent), "image")]
+[JsonDerivedType(typeof(ToolCall), "toolCall")]
 public abstract record ContentBlock
 {
-    /// <summary>Wire discriminator, matching pi's content block type strings.</summary>
+    /// <summary>Wire discriminator for convenience; JSON uses [JsonDerivedType].</summary>
+    [JsonIgnore]
     public abstract string Type { get; }
 }

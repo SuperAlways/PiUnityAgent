@@ -60,7 +60,7 @@ public class MessageTypesTests
             ArgumentsError = "trailing comma",
         };
 
-        var json = JsonSerializer.Serialize(call, JsonOptions);
+        var json = JsonSerializer.Serialize<ContentBlock>(call, JsonOptions);
 
         Assert.Contains("\"type\":\"toolCall\"", json);
         Assert.Contains("\"name\":\"query_hp\"", json);
