@@ -137,4 +137,23 @@ public class ModelsTests
         Assert.Equal(StopReason.Error, done.StopReason);
         Assert.Contains("boom", done.ErrorMessage);
     }
+
+    [Fact]
+    public async Task StreamSimple_Provider_Throws_OperationCanceled_Returns_Aborted()
+    {
+        var models = new Models();
+        models.SetProvider(CreateProvider(stream: (model, context, options, ct) =>
+            throw new OperationCanceledException()));
+
+        var stream = await models.StreamSimpleAsync(
+            CreateModel(),
+            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
+            null,
+            CancellationToken.None);
+        var done = await stream.WaitForDoneAsync();
+
+        // 取消 ≠ 失败：OCE 不得落入通用 catch，终态必须是 Aborted。
+        Assert.Equal(StopReason.Aborted, done.StopReason);
+        Assert.Equal("Request was aborted", done.ErrorMessage);
+    }
 }

@@ -78,7 +78,10 @@ public sealed class FauxProvider
     }
 
     public Model GetModel(string? id = null)
-        => id is null ? Models[0] : Models.First(m => m.Id == id);
+        => id is null
+            ? Models[0]
+            : Models.FirstOrDefault(m => m.Id == id)
+              ?? throw new KeyNotFoundException($"Faux model '{id}' not found.");
 
     private Task<IAssistantMessageEventStream> StreamAsync(
         Model model,
@@ -91,8 +94,40 @@ public sealed class FauxProvider
         _state.IncrementCallCount();
 
         var stream = new AssistantMessageEventStream();
-        _ = EmitAsync(stream, step, model, context, options, cancellationToken);
+        // fire-and-forget 安全：EmitAsync 所有抛错路径都在内部捕获并以终态事件收场（Error/Aborted 后必 End）。
+        if (options?.CancellationToken.CanBeCanceled == true)
+        {
+            // spec §5「Faux 分块中止」：SimpleStreamOptions.CancellationToken 与调用方
+            // token 取链，发射完成后释放链接源。
+            var linked = CancellationTokenSource
+                .CreateLinkedTokenSource(cancellationToken, options.CancellationToken);
+            _ = EmitWithLinkedAsync(stream, step, model, context, options, linked);
+        }
+        else
+        {
+            _ = EmitAsync(stream, step, model, context, options, cancellationToken);
+        }
+
         return Task.FromResult<IAssistantMessageEventStream>(stream);
+    }
+
+    private async Task EmitWithLinkedAsync(
+        AssistantMessageEventStream stream,
+        FauxResponseStep? step,
+        Model model,
+        TranscriptContext context,
+        SimpleStreamOptions? options,
+        CancellationTokenSource linked)
+    {
+        try
+        {
+            await EmitAsync(stream, step, model, context, options, linked.Token)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            linked.Dispose();
+        }
     }
 
     private async Task EmitAsync(
@@ -134,7 +169,9 @@ public sealed class FauxProvider
         }
         catch (OperationCanceledException)
         {
-            EmitAborted(stream, model, "Aborted");
+            // 工厂等待期（或发射前）取消：尚无任何消息存在，产出空内容的 Aborted 终态；
+            // 时间戳取 _clock 而非 0。
+            EmitAborted(stream, model, "Request was aborted");
         }
         catch (Exception error)
         {
@@ -144,12 +181,19 @@ public sealed class FauxProvider
 
     private static Usage EstimateUsage(TranscriptContext context, AssistantMessage message)
     {
-        var input = context.Messages.Sum(m => m switch
+        // spec §6.8：输入 = 全部上下文消息（system/user/assistant/toolResult）的文本块
+        // 长度之和 / 4，向上取整（对齐 pi 的 Math.ceil）；输出 = assistant 文本长度 / 4。
+        var inputLength = context.Messages.Sum(m => m switch
         {
-            UserMessage user => user.Content.ToBlocks().Sum(b => b is TextContent t ? t.Text.Length : 0),
+            SystemMessage system => TextLength(system.Content.ToBlocks()),
+            UserMessage user => TextLength(user.Content.ToBlocks()),
+            AssistantMessage assistant => TextLength(assistant.Content),
+            ToolResultMessage toolResult => TextLength(toolResult.Content),
             _ => 0,
-        }) / 4;
-        var output = message.Content.OfType<TextContent>().Sum(t => t.Text.Length) / 4;
+        });
+        var outputLength = message.Content.OfType<TextContent>().Sum(t => t.Text.Length);
+        var input = (int)Math.Ceiling(inputLength / 4.0);
+        var output = (int)Math.Ceiling(outputLength / 4.0);
         return new Usage
         {
             Input = input,
@@ -157,6 +201,9 @@ public sealed class FauxProvider
             TotalTokens = input + output,
         };
     }
+
+    private static int TextLength(IReadOnlyList<ContentBlock> blocks)
+        => blocks.OfType<TextContent>().Sum(t => t.Text.Length);
 
     private static void EmitError(AssistantMessageEventStream stream, Model model, string message)
         => EmitError(stream, new AssistantMessage
@@ -183,7 +230,7 @@ public sealed class FauxProvider
         stream.End(assistant);
     }
 
-    private static void EmitAborted(AssistantMessageEventStream stream, Model model, string text)
+    private void EmitAborted(AssistantMessageEventStream stream, Model model, string text)
     {
         var assistant = new AssistantMessage
         {
@@ -194,7 +241,7 @@ public sealed class FauxProvider
             Usage = new Usage(),
             StopReason = StopReason.Aborted,
             ErrorMessage = text,
-            Timestamp = 0,
+            Timestamp = _clock.UtcNowMs(),
         };
         stream.Push(new AssistantMessageEvent.Error(StopReason.Aborted, assistant));
         stream.End(assistant);
@@ -205,6 +252,13 @@ public sealed class FauxProvider
         AssistantMessage final,
         CancellationToken cancellationToken)
     {
+        // 预取消在 Start 之前检查：预取消的 token 产出仅 [Error]（无 Start）。
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // 发射前规范化 ToolCall id：空/缺省 id 用 provider 单调计数器补 `tool:{n}`；
+        // 此后 partials、ToolCallEnd、终态消息一律使用规范化后的消息。
+        final = NormalizeToolCallIds(final);
+
         var partial = final with
         {
             Content = Array.Empty<ContentBlock>(),
@@ -213,21 +267,36 @@ public sealed class FauxProvider
         stream.Push(new AssistantMessageEvent.Start(partial));
 
         var built = new List<ContentBlock>();
-        foreach (var block in final.Content)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            switch (block)
+            foreach (var block in final.Content)
             {
-                case TextContent text:
-                    await EmitTextAsync(stream, final, built, text, cancellationToken).ConfigureAwait(false);
-                    break;
-                case ThinkingContent thinking:
-                    await EmitThinkingAsync(stream, final, built, thinking, cancellationToken).ConfigureAwait(false);
-                    break;
-                case ToolCall call:
-                    await EmitToolCallAsync(stream, final, built, call, cancellationToken).ConfigureAwait(false);
-                    break;
+                cancellationToken.ThrowIfCancellationRequested();
+                switch (block)
+                {
+                    case TextContent text:
+                        await EmitTextAsync(stream, final, built, text, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case ThinkingContent thinking:
+                        await EmitThinkingAsync(stream, final, built, thinking, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case ToolCall call:
+                        await EmitToolCallAsync(stream, final, built, call, cancellationToken).ConfigureAwait(false);
+                        break;
+                    default:
+                        throw new InvalidOperationException(
+                            $"faux streamWithDeltas does not support {block.GetType().Name}.");
+                }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // 中途取消：从流上最新 Partial 快照构造 Aborted 终态（快照缺省回落到 final），
+            // 保留已累积内容与原时间戳；本异常不会逃逸到调用方。
+            var aborted = BuildAborted(stream, final);
+            stream.Push(new AssistantMessageEvent.Error(StopReason.Aborted, aborted));
+            stream.End(aborted);
+            return;
         }
 
         if (final.StopReason is StopReason.Error or StopReason.Aborted)
@@ -244,6 +313,35 @@ public sealed class FauxProvider
 
         stream.Push(new AssistantMessageEvent.Done(final.StopReason, final));
         stream.End(final);
+    }
+
+    private AssistantMessage NormalizeToolCallIds(AssistantMessage final)
+    {
+        if (!final.Content.Any(b => b is ToolCall call && string.IsNullOrEmpty(call.Id)))
+        {
+            return final;
+        }
+
+        var content = final.Content
+            .Select(b => b is ToolCall call && string.IsNullOrEmpty(call.Id)
+                ? call with { Id = $"tool:{_state.NextToolCallIndex()}" }
+                : b)
+            .ToArray();
+        return final with { Content = content };
+    }
+
+    private static AssistantMessage BuildAborted(
+        AssistantMessageEventStream stream,
+        AssistantMessage final)
+    {
+        // stream.Partial 是最近一个事件携带的快照（含已累积内容、Usage 与原时间戳）；
+        // 仅在快照尚未建立时回落到 final。
+        var source = stream.Partial ?? final;
+        return source with
+        {
+            StopReason = StopReason.Aborted,
+            ErrorMessage = "Request was aborted",
+        };
     }
 
     private async Task EmitTextAsync(
@@ -320,6 +418,14 @@ public sealed class FauxProvider
 
     private IEnumerable<string> Chunk(string text)
     {
+        // pi/pi.net 对齐：空文本也产出一个空分块（TextStart→空 delta→TextEnd）。
+        if (text.Length == 0)
+        {
+            yield return string.Empty;
+            yield break;
+        }
+
+        // 有效分块大小固定为 min(MinTokenSize, MaxTokenSize)；MaxTokenSize 只起钳位作用。
         var size = Math.Max(1, Math.Min(_options.MinTokenSize, _options.MaxTokenSize));
         for (var i = 0; i < text.Length; i += size)
             yield return text.Substring(i, Math.Min(size, text.Length - i));

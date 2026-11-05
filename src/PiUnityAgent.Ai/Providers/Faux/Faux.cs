@@ -15,8 +15,12 @@ public static class Faux
 
     public static ThinkingContent Thinking(string thinking) => new() { Thinking = thinking };
 
-    public static ToolCall ToolCall(string name, JsonObject arguments, string id)
-        => new() { Id = id, Name = name, Arguments = arguments };
+    /// <summary>
+    /// 工厂辅助：<c>id</c> 可省（spec §6.4）；省略时 Id 置空串，
+    /// 由 FauxProvider 发射前按 provider 单调计数器规范化为 <c>tool:{n}</c>（spec §6.7）。
+    /// </summary>
+    public static ToolCall ToolCall(string name, JsonObject arguments, string? id = null)
+        => new() { Id = id ?? string.Empty, Name = name, Arguments = arguments };
 
     public static AssistantMessage AssistantMessage(
         string content,
@@ -79,8 +83,15 @@ public sealed record FauxProviderOptions
 public sealed class FauxProviderState
 {
     private int _callCount;
+    private long _toolCallIndex;
     public int CallCount => Volatile.Read(ref _callCount);
     internal void IncrementCallCount() => Interlocked.Increment(ref _callCount);
+
+    /// <summary>
+    /// Provider 级单调计数器，支撑确定性 ToolCall id <c>tool:{n}</c>（spec §6.7：
+    /// 不用 DateTime.Now/Random）。
+    /// </summary>
+    internal long NextToolCallIndex() => Interlocked.Increment(ref _toolCallIndex);
 }
 
 public delegate Task<AssistantMessage> FauxResponseFactory(
