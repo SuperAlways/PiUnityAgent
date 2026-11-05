@@ -47,7 +47,7 @@
 └──────────────────────────────▲────────────────────────────────────┘
                                │ 引用
 ┌──────────────────────────────┴────────────────────────────────────┐
-│  PiAgent.Core（netstandard2.1，纯逻辑，零 Unity/游戏引用，可单测）   │
+│  PiUnityAgent.Ai + Core + Runtime（netstandard2.1，纯逻辑，可单测）      │
 │  消息/工具契约 · Agent Loop · 会话树 · 压缩 · 技能 · provider 抽象 │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -63,9 +63,9 @@
 | 层级 | 名称 |
 |---|---|
 | 仓库 / 文件夹 | `unity-game-ai-mod-pi-agent-core` |
-| 解决方案 | `UnityGameAiModPiAgentCore.slnx` |
-| 程序集 / 命名空间 | `PiAgent.Core` / `PiAgent.Hosts.Unity` / `PiAgent.Hosts.Net8` |
-| 扩展接口 | `PiAgent.Extensions.IExtension` |
+| 解决方案 | `PiUnityAgent.slnx` |
+| 程序集 / 命名空间 | `PiUnityAgent.Ai` / `PiUnityAgent.Core` / `PiUnityAgent.Runtime` / `PiUnityAgent.Hosts.*` |
+| 扩展接口 | `PiUnityAgent.Core.Extensions.IExtension` |
 
 理由：文件夹名负责"一眼知道"，代码命名空间负责"少打字"。
 
@@ -85,11 +85,13 @@ unity-game-ai-mod-pi-agent-core/
 │  ├─ README.md
 │  └─ 01-GitHub推送与代理配置-2026-11-05.md
 ├─ src/
-│  ├─ PiAgent.Core/          # netstandard2.1 纯逻辑（待建）
-│  ├─ PiAgent.Hosts.Unity/   # Unity 宿主适配（待建）
-│  └─ PiAgent.Hosts.Net8/    # .NET 8 宿主适配（待建）
+│  ├─ PiUnityAgent.Ai/            # pi-ai 子集：消息/流式/工具/provider
+│  ├─ PiUnityAgent.Core/          # pi-agent-core：循环/状态/工具执行
+│  ├─ PiUnityAgent.Runtime/       # 会话/上下文/压缩/扩展/资源
+│  ├─ PiUnityAgent.Hosts.Unity/   # Unity 宿主适配
+│  └─ PiUnityAgent.Hosts.Net8/    # .NET 8 宿主适配
 ├─ tests/
-│  └─ PiAgent.Core.Tests/    # 纯逻辑单测（待建）
+│  └─ PiUnityAgent.Core.Tests/    # 纯逻辑单测（待建）
 └─ samples/                 # 最小示例（待建）
 ```
 

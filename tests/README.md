@@ -6,11 +6,13 @@
 
 | 层 | 可测性 | 方式 |
 |---|---|---|
-| `PiAgent.Core` | ✅ 必须单测 | 纯逻辑，无 Unity/游戏依赖；xUnit/NUnit 均可 |
-| `PiAgent.Hosts.*` | ⚠️ 靠契约 + 实机 | 胶质层，游戏更新只改这里 |
+| `PiUnityAgent.Ai` | ✅ 必须单测 | 协议/事件流；Faux provider + mock HTTP |
+| `PiUnityAgent.Core` | ✅ 必须单测 | 循环/工具执行；无 Unity/游戏依赖 |
+| `PiUnityAgent.Runtime` | ✅ 必须单测 | 会话树/压缩/扩展/资源 |
+| `PiUnityAgent.Hosts.*` | ⚠️ 靠契约 + 实机 | 胶质层，游戏更新只改这里 |
 | 扩展 | 视业务 | 纯逻辑部分下沉到 Core 风格；胶质部分实机 |
 
-## 必须覆盖的 Core 场景（MVP）
+## 必须覆盖的 Ai/Core/Runtime 场景（MVP）
 
 1. Agent Loop：单轮文本、多轮工具调用、工具失败、中止。
 2. 流式事件：text / reasoning / tool call start-delta-end / usage / done 的顺序与组装。
