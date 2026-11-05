@@ -31,8 +31,16 @@ public sealed class EventStream<TEvent, TResult> : IAsyncEnumerable<TEvent>
         });
     }
 
+    /// <summary>流是否已收场（终态事件 / <see cref="End"/> / <see cref="Fail"/> / 回调异常之后为 true）。</summary>
     public bool IsEnded => _ended;
 
+    /// <summary>
+    /// 入队一个事件；命中终态判定时封流并落定 <see cref="WaitForResultAsync"/> 的结果。
+    /// 单生产者契约：<c>_ended</c> 的 check-then-act 不是原子操作，并发 <c>Push</c>
+    /// 可能让多个事件都走到终态处理，多生产者并发调用不受支持。
+    /// 若终态判定或结果提取回调抛出异常，流按失败收场：通道以该异常完成
+    /// （该事件可能已入队、对消费者可见），<see cref="WaitForResultAsync"/> 抛出原始异常。
+    /// </summary>
     public void Push(TEvent @event)
     {
         if (_ended)
@@ -41,14 +49,25 @@ public sealed class EventStream<TEvent, TResult> : IAsyncEnumerable<TEvent>
         }
 
         _channel.Writer.TryWrite(@event);
-        if (_isComplete(@event))
+        try
+        {
+            if (_isComplete(@event))
+            {
+                var result = _extractResult(@event);
+                _ended = true;
+                _channel.Writer.TryComplete();
+                _completion.TrySetResult(result);
+            }
+        }
+        catch (Exception ex)
         {
             _ended = true;
-            _channel.Writer.TryComplete();
-            _completion.TrySetResult(_extractResult(@event));
+            _channel.Writer.TryComplete(ex);
+            _completion.TrySetException(ex);
         }
     }
 
+    /// <summary>在不推送终态事件的前提下收场，结果即 <paramref name="result"/>。</summary>
     public void End(TResult result)
     {
         if (_ended)
@@ -61,8 +80,20 @@ public sealed class EventStream<TEvent, TResult> : IAsyncEnumerable<TEvent>
         _completion.TrySetResult(result);
     }
 
+    /// <summary>
+    /// 以异常收场，仅限基础设施错误；模型错误应编码为事件推送（如 AssistantMessageEvent.Error），
+    /// 不走本方法。迭代侧消费完已入队事件后抛出原始异常（Channels 完成错误不包
+    /// <see cref="ChannelClosedException"/>，经 <c>ExceptionDispatchInfo.Throw</c> 原样抛出），
+    /// <see cref="WaitForResultAsync"/> 同样抛出原始异常。
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="error"/> 为 null。</exception>
     public void Fail(Exception error)
     {
+        if (error is null)
+        {
+            throw new ArgumentNullException(nameof(error));
+        }
+
         if (_ended)
         {
             return;

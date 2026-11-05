@@ -82,6 +82,8 @@ public sealed class AssistantMessageEventStream : IAssistantMessageEventStream
 
     private void Time(AssistantMessage? message)
     {
+        // _inner.IsEnded 复查是竞态防御：单生产者路径下入口已判过必然为 false；
+        // 若其他线程在入口检查后已用 End/Fail 收场流，这里避免给将被丢弃的事件再盖时长。
         if (message is null || _inner.IsEnded || message.DurationMs is not null)
         {
             return;

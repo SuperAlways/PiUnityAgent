@@ -41,9 +41,25 @@ public class AssistantMessageEventTests
     {
         var partial = Message();
         Assert.False(new AssistantMessageEvent.Start(partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.TextStart(0, partial).IsTerminal);
         Assert.False(new AssistantMessageEvent.TextDelta(0, "x", partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.TextEnd(0, "x", partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ThinkingStart(0, partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ThinkingDelta(0, "x", partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ThinkingEnd(0, "x", partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ToolCallStart(0, partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ToolCallDelta(0, "{}", partial).IsTerminal);
+        Assert.False(new AssistantMessageEvent.ToolCallEnd(0, new ToolCall(), partial).IsTerminal);
         Assert.True(new AssistantMessageEvent.Done(StopReason.Stop, partial).IsTerminal);
         Assert.True(new AssistantMessageEvent.Error(StopReason.Error, partial).IsTerminal);
+    }
+
+    [Fact]
+    public void Done_Rejects_Pending()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            AssistantMessageEventValidation.Validate(
+                new AssistantMessageEvent.Done(StopReason.Pending, Message())));
     }
 
     [Fact]

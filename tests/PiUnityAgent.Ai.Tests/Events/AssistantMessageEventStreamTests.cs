@@ -26,7 +26,9 @@ public class AssistantMessageEventStreamTests
         var final = Message();
 
         stream.Push(new AssistantMessageEvent.Start(start));
+        Assert.Same(start, stream.Partial);
         stream.Push(new AssistantMessageEvent.TextDelta(0, "hi", start));
+        Assert.Same(start, stream.Partial);
         stream.Push(new AssistantMessageEvent.Done(StopReason.Stop, final));
 
         Assert.Same(final, stream.Partial);
@@ -81,12 +83,14 @@ public class AssistantMessageEventStreamTests
     public async Task Timing_Sets_DurationMs_For_New_Message()
     {
         var stream = new AssistantMessageEventStream();
+        await Task.Delay(20);
         var message = Message(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         stream.Push(new AssistantMessageEvent.Done(StopReason.Stop, message));
 
         await stream.WaitForDoneAsync();
         Assert.NotNull(message.DurationMs);
-        Assert.True(message.DurationMs >= 0);
+        Assert.True(message.DurationMs >= 5,
+            $"DurationMs should be >= 5 after a 20ms delay, got {message.DurationMs}");
     }
 
     [Fact]
@@ -132,5 +136,18 @@ public class AssistantMessageEventStreamTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => stream.WaitForDoneAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task WaitForDone_Cancels_While_Waiting()
+    {
+        var stream = new AssistantMessageEventStream();
+        using var cts = new CancellationTokenSource();
+
+        var wait = stream.WaitForDoneAsync(cts.Token);
+        Assert.False(wait.IsCompleted);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
     }
 }
