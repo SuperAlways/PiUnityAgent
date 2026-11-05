@@ -11,8 +11,14 @@
 
 | 参考 | 本地版本 | commit | 日期 | 备注 |
 |---|---|---|---|---|
-| 原版 pi | `v1.3.0` | `73f8de80b` | 2026-10-19 | **待同步**；开工前 fetch 最新 tag 后更新本行 |
-| Pi.NET | `v1.4.5` | `415196a` | 2026-11-04 | 其 `docs/migration-execution-status.md` 对齐上游 v1.5.0 |
+| 原版 pi | `v1.5.0` | `f9a263655` | 2026-11-02 | 已同步；v1.3.0 → v1.5.0 共 389 commits |
+| Pi.NET | `main`（无新 tag，最新 tag `v1.4.5`） | `2d6757b` | 2026-11-05 | `v1.4.5` 之后 40 commits；其 docs 对齐上游 v1.5.0 |
+
+**上游增量（v1.3.0 → v1.5.0，M1 相关）**：
+
+- `packages/agent/src`：4 个文件变更（`agent-loop.ts`、`agent.ts`、`proxy.ts`、`types.ts`），+50/−16 行。
+- `packages/ai`：`types.ts`、`utils/transcript.ts`、`utils/retry.ts`、`providers/faux.ts`、`api/anthropic-messages.ts`、`api/openai-completions.ts` 均有变更。
+- **M1 开工前按 v1.5.0 重读上述文件**，不要沿用 v1.3.0 的印象。
 
 同步命令见 `sop/02-参考源同步-2026-11-05.md`。
 
