@@ -1,10 +1,10 @@
-# unity-game-ai-mod-pi-agent-core
+# PiUnityAgent
 
 > **Unity 游戏 AI mod 的类 pi 底座**——让 AI mod 只写自己的业务，不用再关心底层。
 
 - **参照物**：[pi](https://github.com/earendil-works/pi) 的 `pi-ai` + `pi-agent-core`（不是 `pi-coding-agent`）
 - **语言/生态**：纯 C#，**不依赖 Node/Python 运行时**
-- **目标框架**：Core = `netstandard2.1`（Unity 2021.2+ / 太吾 2022.3），可选 `net8.0` 宿主
+- **目标框架**：底座（Ai/Core/Runtime）= `netstandard2.1`（Unity 2021.2+ / 太吾 2022.3）；Hosts.Net8 = `net8.0`
 - **状态**：设计 / 调研阶段，尚无实现代码
 
 ---
@@ -62,7 +62,7 @@
 
 | 层级 | 名称 |
 |---|---|
-| 仓库 / 文件夹 | `unity-game-ai-mod-pi-agent-core` |
+| 仓库 / 文件夹 | `PiUnityAgent` |
 | 解决方案 | `PiUnityAgent.slnx` |
 | 程序集 / 命名空间 | `PiUnityAgent.Ai` / `PiUnityAgent.Core` / `PiUnityAgent.Runtime` / `PiUnityAgent.Hosts.*` |
 | 扩展接口 | `PiUnityAgent.Core.Extensions.IExtension` |
@@ -74,7 +74,7 @@
 ## 五、目录规划
 
 ```
-unity-game-ai-mod-pi-agent-core/
+PiUnityAgent/
 ├─ README.md
 ├─ docs/
 │  ├─ 00-项目定位与边界.md
@@ -113,7 +113,7 @@ unity-game-ai-mod-pi-agent-core/
 
 | 项目 | 关系 |
 |---|---|
-| **说书人**（本仓库主项目） | 上层扩展之一：感知查询、导演循环、案例 skills、控制 Intent、发布闸 |
+| **说书人**（上层使用者，另一仓库） | 上层扩展之一：感知查询、导演循环、案例 skills、控制 Intent、发布闸 |
 | **太吾药老** | 上层扩展之一：F8 问答、百晓册 skills、LightRAG 工具 |
 | **江湖有灵 / WorldTalk** | 反编译参考；其领域能力（过月编排、幂等日志、ActionTool 防幻觉）作为扩展设计参照，不照抄代码 |
 
