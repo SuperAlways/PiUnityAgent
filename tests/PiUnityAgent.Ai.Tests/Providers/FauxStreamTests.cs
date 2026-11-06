@@ -168,7 +168,7 @@ public class FauxStreamTests
         var events = await CollectAsync(stream);
         var terminal = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
         Assert.Equal(StopReason.Aborted, terminal.Reason);
-        Assert.Equal("Request was aborted", terminal.ErrorMessage.ErrorMessage);
+        Assert.Equal("Request was aborted", terminal.Message.ErrorMessage);
 
         var done = await stream.WaitForDoneAsync();
         Assert.Equal(StopReason.Aborted, done.StopReason);
@@ -191,9 +191,9 @@ public class FauxStreamTests
         // 预取消：仅 [Error] 一个事件，没有 Start。
         var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
         Assert.Equal(StopReason.Aborted, error.Reason);
-        Assert.Equal("Request was aborted", error.ErrorMessage.ErrorMessage);
-        Assert.NotEqual(0, error.ErrorMessage.Timestamp);
-        Assert.Equal(StopReason.Aborted, error.ErrorMessage.StopReason);
+        Assert.Equal("Request was aborted", error.Message.ErrorMessage);
+        Assert.NotEqual(0, error.Message.Timestamp);
+        Assert.Equal(StopReason.Aborted, error.Message.StopReason);
     }
 
     [Fact]
@@ -241,13 +241,13 @@ public class FauxStreamTests
         Assert.IsType<AssistantMessageEvent.Start>(events[0]);
         var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
         Assert.Equal(StopReason.Aborted, error.Reason);
-        Assert.Equal("Request was aborted", error.ErrorMessage.ErrorMessage);
+        Assert.Equal("Request was aborted", error.Message.ErrorMessage);
 
         // Aborted 终态消息取流上最新 Partial 快照：其首块文本 == 已推送 delta 的拼接
         // （0 个 delta 时首块为 TextStart 的空文本，断言同样成立）。
         var deltas = events.OfType<AssistantMessageEvent.TextDelta>().Select(e => e.Delta).ToList();
         var accumulated = string.Concat(deltas);
-        var text = Assert.IsType<TextContent>(error.ErrorMessage.Content[0]).Text;
+        var text = Assert.IsType<TextContent>(error.Message.Content[0]).Text;
         Assert.Equal(accumulated, text);
     }
 
@@ -388,7 +388,7 @@ public class FauxStreamTests
         Assert.Contains(events, e => e is AssistantMessageEvent.TextDelta);
         var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
         Assert.Equal(StopReason.Aborted, error.Reason);
-        Assert.Equal(StopReason.Aborted, error.ErrorMessage.StopReason);
-        Assert.Equal("hello", Assert.IsType<TextContent>(error.ErrorMessage.Content[0]).Text);
+        Assert.Equal(StopReason.Aborted, error.Message.StopReason);
+        Assert.Equal("hello", Assert.IsType<TextContent>(error.Message.Content[0]).Text);
     }
 }

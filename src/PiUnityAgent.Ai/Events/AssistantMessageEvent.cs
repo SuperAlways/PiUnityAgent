@@ -66,7 +66,7 @@ public abstract record AssistantMessageEvent
         public override string Type => "done";
     }
 
-    public sealed record Error(StopReason Reason, AssistantMessage ErrorMessage) : AssistantMessageEvent
+    public sealed record Error(StopReason Reason, AssistantMessage Message) : AssistantMessageEvent
     {
         public override string Type => "error";
     }

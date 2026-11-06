@@ -20,7 +20,7 @@ public sealed class AssistantMessageEventStream : IAssistantMessageEventStream
             extractResult: @event => @event switch
             {
                 AssistantMessageEvent.Done done => done.Message,
-                AssistantMessageEvent.Error error => error.ErrorMessage,
+                AssistantMessageEvent.Error error => error.Message,
                 _ => throw new InvalidOperationException("Terminal event expected."),
             });
 
@@ -37,7 +37,7 @@ public sealed class AssistantMessageEventStream : IAssistantMessageEventStream
         Time(@event switch
         {
             AssistantMessageEvent.Done done => done.Message,
-            AssistantMessageEvent.Error error => error.ErrorMessage,
+            AssistantMessageEvent.Error error => error.Message,
             _ => null,
         });
 
@@ -54,7 +54,7 @@ public sealed class AssistantMessageEventStream : IAssistantMessageEventStream
             AssistantMessageEvent.ToolCallDelta call => call.Partial,
             AssistantMessageEvent.ToolCallEnd call => call.Partial,
             AssistantMessageEvent.Done done => done.Message,
-            AssistantMessageEvent.Error error => error.ErrorMessage,
+            AssistantMessageEvent.Error error => error.Message,
             _ => _partial,
         };
 
