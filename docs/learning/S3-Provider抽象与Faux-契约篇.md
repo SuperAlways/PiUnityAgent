@@ -14,9 +14,9 @@
 | 契约 | 强制级别 | 谁来保证 |
 |---|---|---|
 | Model 是描述，不是请求 | 类型 + 约定 | `Model.cs` |
-| Provider 绑定一组 Model + 一个 StreamFn | 类型 + 约定 | `Provider.cs` |
+| Provider 绑定一组 Model + 一个 StreamFn | 类型 + 约定 | `IProvider.cs` |
 | 注册表按 `Model.Provider` 分发 | 运行时 | `Models.cs` |
-| 未知 provider → Error 事件，不抛 | **运行时硬契约** | `Models.StreamSimpleAsync` |
+| 未知 provider → Error 事件，不抛 | **运行时硬契约** | `Models.Stream/StreamSimple` |
 | StreamFn 永不抛 | **运行时兜底 + 生产者责任** | `Models` + 各 provider |
 | 取消归 Aborted，失败归 Error | 运行时 | `Models` + Faux |
 | 公共选项不混入测试旋钮 | 类型边界 | `SimpleStreamOptions` vs `FauxProviderOptions` |
@@ -49,7 +49,7 @@
   - 一个 Provider 可以带多个 Model；
   - `Stream` 是该族模型的统一入口；
   - `Models` 列表构造后视为不可变；
-  - S3 的 Provider 不含认证信息。
+  - S3 的 Provider 带 `Auth` 形状；API Key 解析/内存 store 可用；OAuth 行为 D1 后置 S5。
 - **在哪强制**：record 形状 + 约定。
 - **破坏后果**：每个模型各写一份 HTTP 逻辑；注册表无法按族管理；认证污染接口。
 - **验收问法**：为什么不给每个 Model 单独配一个 StreamFn？
@@ -66,7 +66,7 @@
   - `GetProvider` 找不到返回 `null`；
   - `GetModels(provider)` 过滤；`GetModels(null)` 返回全部；
   - `GetModel(provider, id)` 找不到返回 `null`；
-  - `StreamSimpleAsync` 只按 `model.Provider` 查找，不按 `model.Api`。
+  - `Stream/StreamSimple` 只按 `model.Provider` 查找，不按 `model.Api`。
 - **在哪强制**：`Models.cs` 运行时；测试覆盖。
 - **破坏后果**：换 provider 后旧实例残留；id 不一致导致"注册了却找不到"。
 - **验收问法**：`model.Provider = "deepseek"`，注册表里只有 `"openai"`，会发生什么？
@@ -82,7 +82,7 @@
   - 不抛异常；
   - 错误消息可读（`Unknown provider: {id}`）；
   - 这是 S2 "失败是数据"在 S3 的延续。
-- **在哪强制**：`Models.StreamSimpleAsync` 运行时硬契约；测试覆盖。
+- **在哪强制**：`Models.Stream/StreamSimple` 运行时硬契约；测试覆盖。
 - **破坏后果**：agent loop 被异常打断；玩家看到崩溃而不是"模型不可用"。
 - **验收问法**：为什么未知 provider 不直接 `throw`？
 
@@ -90,17 +90,15 @@
 
 ---
 
-## 卡 5 · StreamFn 永不抛
+## 卡 5 · StreamFn 永不抛（v2 修正）
 
 - **必须成立**：
-  - `StreamFn` 返回 `Task<IAssistantMessageEventStream>`；
+  - `StreamFn` **同步返回** `IAssistantMessageEventStream`；
   - 同步异常和异步异常都不能穿透调用方；
-  - 失败编码为 S2 终态事件；
-  - `Models.StreamSimpleAsync` 兜底：
-    - `OperationCanceledException` → `Error(Aborted)`；
-    - 其他异常 → `Error(Error)`；
+  - `Models.Stream/StreamSimple` 经 `LazyStream` **返回即启动** setup，setup 失败（包括 OCE）→ `Error(Error)`；
+  - `Aborted` 由 provider 内层流主动产出，不由 LazyStream setup 改写；
   - 若 provider 已返回流、之后流自身故障，属于 S2 `Fail`（基础设施），不是 StreamFn 的同步失败。
-- **在哪强制**：`Models.cs` 的 try/catch；各 provider 责任；测试覆盖。
+- **在哪强制**：`LazyStream` 的 catch；各 provider 责任；测试覆盖。
 - **破坏后果**：S7 到处写 try/catch；失败语义分裂成"异常"和"事件"两套。
 - **验收问法**：provider 内部抛 `InvalidOperationException`，调用方拿到什么？
 
@@ -108,21 +106,20 @@
 
 ---
 
-## 卡 6 · 取消归 Aborted，失败归 Error
+## 卡 6 · 取消归 Aborted，失败归 Error（v2 修正）
 
 - **必须成立**：
-  - `OperationCanceledException` → `StopReason.Aborted`；
+  - 用户取消/中止由 provider 内层流主动产出 `Error(Aborted)`；
+  - `LazyStream` 的 setup 异常（包括 `OperationCanceledException`）统一编码为 `Error(Error)`——pi/pi.net 的 `lazyStream` 不在 setup 异常里区分 OCE；
   - 其他失败 → `StopReason.Error`；
-  - 两个取消通道都要尊重：
-    - `StreamFn` 的 `CancellationToken`；
-    - `SimpleStreamOptions.CancellationToken`；
-  - Faux 用 linked CTS 同时监听两者；
+  - 取消唯一入口是 `SimpleStreamOptions.CancellationToken`；
+  - Faux 只监听该 token，不再有 linked CTS；
   - 取消前已生成的内容要保留（S2 partial 语义）。
-- **在哪强制**：`Models` 的 catch 分支；Faux 的 linked CTS 与 abort 快照。
+- **在哪强制**：`LazyStream` 的 catch；Faux 的取消快照。
 - **破坏后果**：用户停止被当成环境错误 → 自动重试；取消后丢掉半截内容。
 - **验收问法**：用户点了停止，最终消息的 `StopReason` 应该是什么？
 
-> 答案：`Aborted`，不是 `Error`。
+> 答案：provider 流内是 `Aborted`；LazyStream 的 setup 失败是 `Error`，两者不能混。
 
 ---
 
@@ -196,7 +193,7 @@
 | 项 | pi / pi.net | 我们 | 原因 |
 |---|---|---|---|
 | Api 类型 | 泛型 `Model<TApi>` | `string Api` | 避免泛型爆炸；运行时校验 |
-| 认证 | pi.net 集成 Auth/ModelSpec | S3 无 auth | S4/S5 再引入 |
+| 认证 | pi.net 集成 Auth/ModelSpec | S3 有 Auth 形状 + API Key 解析/内存 store；OAuth D1 后置 | S4/S5 |
 | 注册表 | 完整目录/刷新/图片/分类 | 最小 chat 注册表 | S3 范围 |
 | Faux ID | 时间+随机 | 单调计数器 | 确定性测试 |
 | Faux 分块 | 随机 3–5 token | 固定 chunk | 确定性测试 |

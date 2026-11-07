@@ -109,7 +109,8 @@ pi.net 已经先选了快照（`AssistantMessageEventStream.Partial` 每次 Push
 两者是不同通道：
 
 - **消费侧 token**（迭代器 / `WaitForDone`）：只是不再读；生产者可能继续推，unbounded 缓冲会涨；
-- **生产侧 token**（`StreamFn` / `SimpleStreamOptions`）：provider 应中止 HTTP 请求或调用厂商 cancel API，并产出 `Error(Aborted)` 终态。
+- **生产侧 token**（v2 起只有 `SimpleStreamOptions.CancellationToken`）：provider 应中止 HTTP 请求或调用厂商 cancel API，并产出 `Error(Aborted)` 终态。
+- **LazyStream setup 异常**（含 OCE）：按 pi/pi.net `lazyStream` 统一编码为 `Error(Error)`；Aborted 由 provider 内层流负责，不在 setup 层自行改写。
 
 标准 SSE 没有通用的"stop generating"消息，实际做法是客户端关闭 HTTP 连接；部分厂商为延后/后台任务提供显式 cancel 端点。底座不能保证厂商立刻停止计算，只能保证本地尽快中止请求。
 
@@ -192,5 +193,5 @@ pi 原版用 `Date.now()` + `Math.random()` 生成 ID，分块大小也随机；
 
 两层区分：
 
-- **请求建立/返回流之前的失败**：`Models.StreamSimpleAsync` 兜底转成 Error/Aborted 终态事件；
+- **请求建立/返回流之前的失败**：`Models.Stream/StreamSimple` 经 `LazyStream` 兜底，统一转成 `Error(Error)` 终态事件；`Aborted` 由 provider 内层流主动产出；
 - **流已返回、之后内部故障**：属于基础设施错误，用 `EventStream.Fail(exception)` 关闭；迭代侧和 `WaitForDoneAsync` 都会抛原始异常，而不是编码成模型错误事件。

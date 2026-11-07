@@ -66,15 +66,16 @@ S3 是**接口层**，不是实现层。真正的 HTTP/SSE 在 S4/S5。
 
 ---
 
-## 4. Provider：一组 Model + 一个 StreamFn
+## 4. Provider：一组 Model + 一个 StreamFn（v2：IProvider）
 
 ```csharp
-Provider { Id, Name, Models, Stream }
+IProvider { Id, Name, BaseUrl, Headers, Auth, GetModels, GetAllModels, Stream, StreamSimple }
 ```
 
 - 一个 provider 可以带多个模型（同协议、不同型号）；
-- `Stream` 是该 provider 的统一入口；
-- S3 的 Provider 不含认证信息（S4/S5 再处理）。
+- `Stream`/`StreamSimple` 是 provider 的统一入口，**同步返回**事件流；
+- v2 的 Provider 带 `Auth` 形状；API Key 解析可用，OAuth 行为后置 D1；
+- 可选能力用独立接口（`IRefreshableProvider` / `IDeferredProvider` / `IImagesProvider` / `IClassifierProvider`），不用 DIM。
 
 **Provider 抽象的是"怎么调用"，Model 描述的是"调用谁、有什么能力"。**
 
@@ -84,26 +85,26 @@ Provider { Id, Name, Models, Stream }
 
 - `SetProvider` / `DeleteProvider` / `ClearProviders`：注册生命周期；
 - `GetProvider` / `GetModels` / `GetModel`：按 id 查找；
-- `StreamSimpleAsync`：按 `model.Provider` 找 provider → 调 `StreamFn` → 返回 S2 流；
+- `Stream/StreamSimple`：按 `model.Provider` 找 provider → 调 `StreamFn` → 返回 S2 流；
 - 找不到 provider → 返回 **Error 事件流**，不抛异常。
 
 它只按 `model.Provider` 分发，不按 `model.Api`；`Api` 留给 provider 内部决定协议。
 
 ---
 
-## 6. StreamFn：唯一的调用契约
+## 6. StreamFn / Models.Stream：唯一的调用契约（v2 修正）
 
 ```csharp
-Task<IAssistantMessageEventStream> Stream(
+IAssistantMessageEventStream StreamFn(
     Model model,
     TranscriptContext context,
-    SimpleStreamOptions? options,
-    CancellationToken ct)
+    StreamOptions? options)
 ```
 
-- **不得抛异常**；失败编码为终态事件（S2 契约）；
-- 返回 S2 流，调用方不关心实现；
-- Faux、OpenAI、Anthropic 都实现这一个形状。
+- 同步返回 S2 流；`Models.Stream` 经 `LazyStream` **返回即启动** setup/factory，不等认证/分派完成；
+- setup 失败（包括 OCE）编码为 `Error(Error)`；`Aborted` 由 provider 内层流主动产出；
+- 取消唯一入口是 `StreamOptions.CancellationToken`；
+- 不得向调用方抛异常；Faux、OpenAI、Anthropic 都实现这一个形状。
 
 ---
 
@@ -156,7 +157,7 @@ models.SetProvider(deepSeek.Provider);  // 生产
 | 结构 | 模式 |
 |---|---|
 | `Models` 注册表 | Registry / Service Locator |
-| `Provider.StreamFn` | Strategy |
+| `IProvider.Stream` | Strategy |
 | `Provider.Models` | 一对多聚合 |
 | `Model.Provider` | 外键 / 反向引用 |
 | `FauxProvider` | Fake Object（测试替身） |
@@ -171,10 +172,10 @@ models.SetProvider(deepSeek.Provider);  // 生产
 ## 9. 边界（S3 不做什么）
 
 - 不解析 HTTP/SSE（S4/S5）；
-- 不做 API Key/OAuth/凭据存储（S4/S5）；
-- 不做动态模型目录刷新；
-- 不做图片/分类 provider；
-- 不实现 Deferred 行为（类型保留）；
+- **API Key 解析 + 内存凭据 store 已实现**；OAuth/持久化凭据 D1/D7 后置 S5；
+- 不做动态模型目录刷新（D2，S4）；
+- 不做图片/分类 provider 真实实现（D4/D5，2B/后续；接口与 stub 已在 S3）；
+- 不实现 Deferred 行为（D3，S8；接口与 stub 已在 S3）；
 - 不执行工具、不跑 agent loop（S6/S7）。
 
 ---
@@ -186,7 +187,7 @@ models.SetProvider(deepSeek.Provider);  // 生产
 3. **"注册表必须是全局单例"** —— 不是；可实例化，测试可隔离。
 4. **"Faux 只是占位"** —— 不是；它是确定性测试替身。
 5. **"未知 provider 应该抛异常"** —— 不；按 S2 契约编码成 Error 事件。
-6. **"S3 要处理认证"** —— 不；认证在 S4/S5。
+6. **"S3 要处理所有认证"** —— 不；S3 只补 Auth 形状 + API Key 解析/内存 store；OAuth 登录/刷新与持久化 D1/D7 在 S5。
 
 ---
 
