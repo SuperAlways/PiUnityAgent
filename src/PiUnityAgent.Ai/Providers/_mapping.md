@@ -2,11 +2,11 @@
 
 | 上游 | 我们 | 说明 |
 |---|---|---|
-| `packages/ai/src/types.ts` `Model` / `BaseModel` | `Types/Model.cs` | 字段子集；无泛型 api 约束 |
-| `packages/ai/src/models.ts` `Models` | `Providers/Models.cs` | 最小 chat 注册表；无 auth/刷新/图片/分类 |
-| `packages/ai/src/providers/faux.ts` `createFauxCore` | `Providers/Faux/FauxProvider.cs` + `Faux.cs` | 脚本队列/工厂/状态；无 deferred |
+| `packages/ai/src/types.ts` `Model` / `BaseModel` | `Types/Model.cs` | `ProviderModel` 继承族 + `Type` 判别；无泛型 api 约束 |
+| `packages/ai/src/models.ts` `Models` | `Providers/Models.cs` + `Models.*.cs` | 完整门面形状（S3 v2）；刷新 D2/Deferred D3/图片 D4/分类 D5 stub 后置 |
+| `packages/ai/src/providers/faux.ts` `createFauxCore` | `Providers/Faux/FauxProvider.cs` + `Faux.cs` | 脚本队列/工厂/状态；无 deferred（D3） |
 | `pi.net Providers/Faux.cs` | 同名 | pi.net 的 auth/ModelSpec/Deferred 不采用 |
-| `pi.net Models/Models.cs` | `Models.cs` | 最小注册表 |
+| `pi.net Models/Models.cs` | `Models.cs` | 同步 Stream/LazyStream 形状对齐 pi |
 
 ## 2.1 适配
 
@@ -26,3 +26,14 @@
 - 空队列错误（"No more faux responses queued"）携带零 usage；
 - 中途取消/中止的终态文案为 `"Request was aborted"`，消息取流上最新 Partial 快照
   （保留已累积内容、Usage 与原时间戳）；工厂等待期取消为空内容 + `_clock.UtcNowMs()`。
+
+## S3 返工 v2 新增映射
+
+| 上游 | 我们 | 说明 |
+|---|---|---|
+| `Provider` | `IProvider.cs` | 接口 + 可选能力接口；不用 DIM |
+| `createProvider` | `StaticProvider.cs` | 静态 provider 骨架 |
+| `Models` | `Models.cs` + `Models.*.cs` | 注册/认证/流式/能力分 partial |
+| `auth/types.ts` | `Auth/*.cs` | 类型面；API Key 解析可用 |
+| `lazyStream` | `Events/LazyStream.cs` | 同步返回、返回即调度启动（Task.Run） |
+| `providers/faux.ts` | `Faux/FauxProvider.cs` | 迁移到 IProvider/同步流/单取消 |

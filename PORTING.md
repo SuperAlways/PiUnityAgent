@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | 原版 pi | `v1.5.0` | `f9a263655` | 2026-11-02 | 已同步；v1.3.0 → v1.5.0 共 389 commits |
 | Pi.NET | `main`（无新 tag，最新 tag `v1.4.5`） | `2d6757b` | 2026-11-05 | `v1.4.5` 之后 40 commits；其 docs 对齐上游 v1.5.0 |
-| UnityLlmTransport | Phase 2 终审 | `87db637` | 2026-11-07 | 通讯底座；B 方案下由 Host 适配器消费；3 版本 × Mono/IL2CPP 6 组 15/15 |
+| UnityLlmTransport | Phase 2 终审 | `87db637` | 2026-11-07 | 通讯底座；B 方案下由 Host 适配器消费；四版本 × Mono/IL2CPP 8 组 15/15（含 2022.3.62f3c1 测试主基线） |
 
 **上游增量（v1.3.0 → v1.5.0，M1 相关）**：
 
@@ -27,24 +27,24 @@
 
 ## 1. M1 · PiUnityAgent.Ai（pi-ai 子集）
 
-> **S1/S2/S3 状态（2026-11-07）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版均已合 `main`；累计 127 项测试。S3 对齐返工 spec v2（Fetch 端口 B 方案）待执行。详见 `docs/learning/S1-*`、`S2-*`、`S3-*`。
+> **S1/S2/S3 状态（2026-11-07）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版已合 `main`；S3 对齐返工 v2（IProvider/Fetch 端口/Auth 类型/LazyStream）已在 `feature/s3-rework-v2` 完成。详见 `docs/learning/S1-*`、`S2-*`、`S3-*` 与 v2 补充篇。
 
 | 上游文件 | 我们的文件 | 状态 | 偏离说明 |
 |---|---|---|---|
 | `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 消息/内容类型、S2 事件、S3 Model/选项均已落地；S3 返工 v2 补 `FetchFunction` 端口与形状对齐 |
 | `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/*` | ✅ | S2 完成：12 事件 + EventStream + AssistantMessageEventStream；单消费者 |
-| `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Context/Transcript.cs` | ⬜ | `normalizeContext` 保留语义 |
+| `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Types/TranscriptNormalization.cs` | ✅ | `normalizeContext` 折叠 system prompt/tools；重放辅助 D11 后置 |
 | `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Reliability/Retry.cs` | ⬜ | 指数退避 + 抖动 |
 | `packages/ai/src/utils/estimate.ts` | `src/PiUnityAgent.Ai/Tokens/Estimate.cs` | ⬜ | 粗略 token 估算 |
 | `packages/ai/src/utils/abort.ts` | `src/PiUnityAgent.Ai/Reliability/Abort.cs` | ⬜ | 优先用 `CancellationToken` |
-| `packages/ai/src/types.ts`（`fetch?`） | `src/PiUnityAgent.Ai/Types/Fetch.cs` | 🟡 | S3 返工 v2：`FetchFunction` 自有端口（B 方案）；Host 适配器映射到 `IStreamingHttpTransport` / `HttpClient` |
+| `packages/ai/src/types.ts`（`fetch?`） | `src/PiUnityAgent.Ai/Types/Fetch.cs` | ✅ | S3 返工 v2：自有 `FetchFunction` 端口（B 方案）；Host 适配器在 S13/S4 |
 | `packages/ai/src/api/openai-completions.ts` | `src/PiUnityAgent.Ai/Api/OpenAiCompletions.cs` | ⬜ | OpenAI-compatible / DeepSeek |
 | `packages/ai/src/api/anthropic-messages.ts` | `src/PiUnityAgent.Ai/Api/AnthropicMessages.cs` | ⬜ | 保留 cache/thinking 语义 |
-| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；deferred/auth 后置 |
-| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | 🟡 | 最小 chat 注册表；auth/刷新/图片/分类后置 |
+| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；Deferred 行为 D3 后置 |
+| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | 🟡 | 完整门面形状；刷新 D2、Deferred D3、图片 D4、分类 D5 后置 |
 | `packages/ai/src/index.ts` | — | ⛔ | C# 不建 barrel |
-| `packages/ai/src/auth/**`、`oauth*.ts` | — | ⛔ | 不做 OAuth/CLI 登录 |
-| `packages/ai/src/images*`、`classify*` | — | ⛔ | 不做图片/分类 |
+| `packages/ai/src/auth/**`、`oauth*.ts` | `src/PiUnityAgent.Ai/Providers/Auth/` | 🟡 | Auth 类型 + API Key 解析 + 内存 store；OAuth/持久化 D1/D7 后置 |
+| `packages/ai/src/images*`、`classify*` | `src/PiUnityAgent.Ai/Types/ImagesTypes.cs`、`ClassifierTypes.cs`、`Providers/ProviderCapabilities.cs` | 🟡 | 类型 + 能力接口 + `Models` stub；真实实现 D4/D5 后置 |
 | `packages/ai/src/api/vertex-ai.ts`、`bedrock*`、`mistral*`、`google*` | — | ⛔ | 非目标 provider |
 
 ---

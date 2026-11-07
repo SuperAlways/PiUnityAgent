@@ -40,3 +40,13 @@
 `ImagesContext`、`ImagesOutputContent`、`ClassifierContext`、`NestedToolCalls`、`DeferredHandle`、`AssistantMessageDiagnostic` 已保留类型；未实现的部分标 `TODO` / `NotSupportedException`，不删除、不改语义。
 
 `AssistantMessageEvent` 属于 S2；provider 专属字段按 provider 阶段补齐。
+
+## S3 返工 v2 新增映射
+
+| 上游 | 我们的文件 | 说明 |
+|---|---|---|
+| `FetchFunction` / `fetch?` | `Fetch.cs` | PiUnityAgent 自有端口；Host 适配器在 S13/S4 |
+| `ProviderModel` / `Model` / `ImageModel` / `ClassifierModel` | `Model.cs` | C# 继承 + `Type` 判别 |
+| `StreamOptions` / `SimpleStreamOptions` | `StreamOptions.cs` / `SimpleStreamOptions.cs` | 基类 + 派生 |
+| `CacheRetention` / `Transport` / `ToolChoice` | `StreamOptionTypes.cs` / `Fetch.cs` | enum + wire converter |
+| `normalizeContext` | `TranscriptNormalization.cs` | 前导 system 折叠 |

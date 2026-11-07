@@ -5,7 +5,7 @@
 - **参照物**：[pi](https://github.com/earendil-works/pi) 的 `pi-ai` + `pi-agent-core`（不是 `pi-coding-agent`）
 - **语言/生态**：纯 C#，**不依赖 Node/Python 运行时**
 - **目标框架**：底座（Ai/Core/Runtime）= `netstandard2.1`（Unity 2021.2+ / 太吾 2022.3）；Hosts.Net8 = `net8.0`
-- **状态**：S1–S3 初版已实现并合入 `main`（127 项测试）；S3 形状返工（spec v2，B 通讯端口方案）待执行；通讯底座 `UnityLlmTransport` Phase 0/1/2 已完成（独立仓库）
+- **状态**：S1–S3（含 2026-11-07 S3 对齐返工 v2）已在 `feature/s3-rework-v2` 完成；测试数量以 `dotnet test` 输出为准；通讯底座 `UnityLlmTransport` Phase 0/1/2 已完成（独立仓库）
 
 ---
 
@@ -131,11 +131,10 @@ PiUnityAgent/
 - ✅ 需求与边界（`docs/00`）、C# 生态调研（`docs/01`）、Pi.NET 复用评估（`docs/02`）
 - ✅ **S1 消息与内容模型**（已合 `main`）
 - ✅ **S2 流式事件协议**（已合 `main`）
-- ✅ **S3 Provider 抽象与 Faux**（初版已合 `main`；累计 127 项测试）
-- 🟡 **S3 对齐返工 spec v2**：B 通讯端口方案，待 review → plan → 实施
+- ✅ **S3 Provider 抽象与 Faux + 对齐返工 v2**（`IProvider`/完整公共形状/自有 Fetch 端口/Auth 类型/LazyStream；feature 分支待用户验收合并）
 - ✅ **通讯底座 UnityLlmTransport Phase 0/1/2**（独立仓库，2026-11-07；2021.3/6.3/6.6 六组 15/15）
 - ✅ **2022.3.62f3c1 测试主基线已补测通过**（Mono/IL2CPP U1–U11 15/15）；游戏实际 f2 的最终游戏内验收属 S4
-- ⬜ **S4 OpenAI-compatible / DeepSeek**（S3 返工完成后开工）
+- ⬜ **S4 OpenAI-compatible / DeepSeek**（S3 v2 已完成，随时可开工）
 - ⬜ Core MVP 设计 / S6–S8
 - ⬜ S13 Unity 宿主
 - ⬜ 药老迁移验证

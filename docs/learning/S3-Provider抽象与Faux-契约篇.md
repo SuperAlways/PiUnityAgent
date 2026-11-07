@@ -1,6 +1,6 @@
 # S3 契约篇 · Provider / Model / Faux
 
-> ⚠️ **初版教学篇（2026-11-07 注）**：S3 返工 v2 采用 B 通讯端口（`StreamOptions.Fetch` + `TransportKind`，见 `docs/07-通讯层集成契约.md`）。本文描述初版形状；返工落地后需同步更新，实现以 spec v2 为准。
+> ⚠️ **v2 已实现（2026-11-07）**：本文保留初版十卡契约；v2 的 `IProvider`/同步 `Stream`/单取消入口/Fetch 端口以 [v2 补充](S3-Provider抽象与Faux-v2补充.md) 为准。
 
 > **阶段**：S3（pi-ai provider 抽象 + Faux）。
 > **用途**：复习时只看这里；字段细节查源码。
@@ -194,7 +194,7 @@
 |---|---|---|---|
 | Api 类型 | 泛型 `Model<TApi>` | `string Api` | 避免泛型爆炸；运行时校验 |
 | 认证 | pi.net 集成 Auth/ModelSpec | S3 有 Auth 形状 + API Key 解析/内存 store；OAuth D1 后置 | S4/S5 |
-| 注册表 | 完整目录/刷新/图片/分类 | 最小 chat 注册表 | S3 范围 |
+| 注册表 | 完整目录/刷新/图片/分类 | 完整门面形状；刷新/Deferred/图片/分类 stub（D2–D5） | S3 范围 |
 | Faux ID | 时间+随机 | 单调计数器 | 确定性测试 |
 | Faux 分块 | 随机 3–5 token | 固定 chunk | 确定性测试 |
 | Deferred | 支持 fetch/cancel | 类型保留、行为后置 | S3 范围 |
