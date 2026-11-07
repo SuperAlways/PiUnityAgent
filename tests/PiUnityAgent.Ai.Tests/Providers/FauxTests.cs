@@ -19,6 +19,17 @@ public class FauxTests
     }
 
     [Fact]
+    public void Provider_Is_IProvider_And_Lists_Chat_Models()
+    {
+        var faux = new FauxProvider();
+        var provider = Assert.IsAssignableFrom<IProvider>(faux.Provider);
+
+        Assert.Single(provider.GetModels());
+        Assert.Single(provider.GetAllModels());
+        Assert.Equal(Faux.DefaultModelId, provider.GetModels()[0].Id);
+    }
+
+    [Fact]
     public void Set_Append_And_Pending_Responses()
     {
         var faux = new FauxProvider();

@@ -31,11 +31,10 @@ public class FauxStreamTests
         });
 
         var model = faux.GetModel();
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             model,
             new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+            null);
         var events = await CollectAsync(stream);
 
         Assert.IsType<AssistantMessageEvent.Start>(events[0]);
@@ -58,11 +57,10 @@ public class FauxStreamTests
             }, StopReason.ToolUse)),
         });
 
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             faux.GetModel(),
             new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+            null);
         var events = await CollectAsync(stream);
 
         Assert.Contains(events, e => e is AssistantMessageEvent.ThinkingStart);
@@ -78,11 +76,10 @@ public class FauxStreamTests
     public async Task Empty_Queue_Emits_Error()
     {
         var faux = new FauxProvider();
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             faux.GetModel(),
             new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+            null);
         var done = await stream.WaitForDoneAsync();
 
         Assert.Equal(StopReason.Error, done.StopReason);
@@ -98,11 +95,10 @@ public class FauxStreamTests
             new FauxResponseStep.Response(Faux.AssistantMessage("bad", StopReason.Error, "boom")),
         });
 
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             faux.GetModel(),
             new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+            null);
         var events = await CollectAsync(stream);
 
         Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
@@ -132,7 +128,7 @@ public class FauxStreamTests
         var model = faux.GetModel();
         var context = EmptyContext();
         var options = new SimpleStreamOptions { Temperature = 0.5 };
-        var stream = await faux.Provider.Stream(model, context, options, CancellationToken.None);
+        var stream = faux.Provider.Stream(model, context, options);
         var done = await stream.WaitForDoneAsync();
 
         Assert.Equal(StopReason.Stop, done.StopReason);
@@ -158,11 +154,10 @@ public class FauxStreamTests
         });
 
         using var cts = new CancellationTokenSource();
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             faux.GetModel(),
             EmptyContext(),
-            null,
-            cts.Token);
+            new SimpleStreamOptions { CancellationToken = cts.Token });
         cts.Cancel();
 
         var events = await CollectAsync(stream);
@@ -185,7 +180,10 @@ public class FauxStreamTests
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        var stream = await faux.Provider.Stream(faux.GetModel(), EmptyContext(), null, cts.Token);
+        var stream = faux.Provider.Stream(
+            faux.GetModel(),
+            EmptyContext(),
+            new SimpleStreamOptions { CancellationToken = cts.Token });
         var events = await CollectAsync(stream);
 
         // 预取消：仅 [Error] 一个事件，没有 Start。
@@ -207,11 +205,10 @@ public class FauxStreamTests
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        var stream = await faux.Provider.Stream(
+        var stream = faux.Provider.Stream(
             faux.GetModel(),
             EmptyContext(),
-            new SimpleStreamOptions { CancellationToken = cts.Token },
-            CancellationToken.None);
+            new SimpleStreamOptions { CancellationToken = cts.Token });
         var events = await CollectAsync(stream);
 
         var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
@@ -235,7 +232,10 @@ public class FauxStreamTests
 
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(20);
-        var stream = await faux.Provider.Stream(faux.GetModel(), EmptyContext(), null, cts.Token);
+        var stream = faux.Provider.Stream(
+            faux.GetModel(),
+            EmptyContext(),
+            new SimpleStreamOptions { CancellationToken = cts.Token });
         var events = await CollectAsync(stream);
 
         Assert.IsType<AssistantMessageEvent.Start>(events[0]);
@@ -261,7 +261,7 @@ public class FauxStreamTests
             new FauxResponseStep.Response(Faux.AssistantMessage(scripted)),
         });
 
-        var stream = await faux.Provider.Stream(faux.GetModel(), EmptyContext(), null, CancellationToken.None);
+        var stream = faux.Provider.Stream(faux.GetModel(), EmptyContext(), null);
         var events = await CollectAsync(stream);
 
         var concatenated = string.Concat(
@@ -281,7 +281,7 @@ public class FauxStreamTests
             new FauxResponseStep.Response(Faux.AssistantMessage("abc")),
         });
 
-        var stream = await faux.Provider.Stream(faux.GetModel(), EmptyContext(), null, CancellationToken.None);
+        var stream = faux.Provider.Stream(faux.GetModel(), EmptyContext(), null);
         var events = await CollectAsync(stream);
 
         var deltas = events.OfType<AssistantMessageEvent.TextDelta>().ToList();
@@ -311,11 +311,10 @@ public class FauxStreamTests
         static async Task<List<AssistantMessageEvent>> RunAsync(FauxProvider faux)
         {
             faux.SetResponses(Script());
-            var stream = await faux.Provider.Stream(
+            var stream = faux.Provider.Stream(
                 faux.GetModel(),
                 new TranscriptContext { Messages = Array.Empty<Message>() },
-                null,
-                CancellationToken.None);
+                null);
             return await CollectAsync(stream);
         }
 
@@ -358,7 +357,7 @@ public class FauxStreamTests
                 new UserMessage { Timestamp = 2, Content = MessageContent.From("12") },
             },
         };
-        var stream = await faux.Provider.Stream(faux.GetModel(), context, null, CancellationToken.None);
+        var stream = faux.Provider.Stream(faux.GetModel(), context, null);
         var done = await stream.WaitForDoneAsync();
 
         // 输入 3+2=5 字符 → ceil(5/4)=2；输出 9 字符 → ceil(9/4)=3。
@@ -381,7 +380,7 @@ public class FauxStreamTests
             new FauxResponseStep.Response(Faux.AssistantMessage("hello", StopReason.Aborted)),
         });
 
-        var stream = await faux.Provider.Stream(faux.GetModel(), EmptyContext(), null, CancellationToken.None);
+        var stream = faux.Provider.Stream(faux.GetModel(), EmptyContext(), null);
         var events = await CollectAsync(stream);
 
         // 脚本消息先照常重放内容，再以 Error(Aborted) 收场。

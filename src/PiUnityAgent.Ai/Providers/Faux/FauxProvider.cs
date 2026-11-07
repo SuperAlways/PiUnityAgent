@@ -42,16 +42,15 @@ public sealed class FauxProvider
             MaxTokens = definition.MaxTokens,
         }).ToList();
 
-        Provider = new Provider
-        {
-            Id = _options.Provider,
-            Name = _options.Provider,
-            Models = Models,
-            Stream = StreamAsync,
-        };
+        Provider = new StaticProvider(
+            _options.Provider,
+            _options.Provider,
+            Models,
+            Stream,
+            baseUrl: Faux.DefaultBaseUrl);
     }
 
-    public Provider Provider { get; }
+    public IProvider Provider { get; }
     public IReadOnlyList<Model> Models { get; }
     public FauxProviderState State => _state;
 
@@ -83,51 +82,22 @@ public sealed class FauxProvider
             : Models.FirstOrDefault(m => m.Id == id)
               ?? throw new KeyNotFoundException($"Faux model '{id}' not found.");
 
-    private Task<IAssistantMessageEventStream> StreamAsync(
+    private IAssistantMessageEventStream Stream(
         Model model,
         TranscriptContext context,
-        SimpleStreamOptions? options,
-        CancellationToken cancellationToken)
+        StreamOptions? options)
     {
         FauxResponseStep? step;
         lock (_gate) step = _responses.Count > 0 ? _responses.Dequeue() : null;
         _state.IncrementCallCount();
 
         var stream = new AssistantMessageEventStream();
-        // fire-and-forget 安全：EmitAsync 所有抛错路径都在内部捕获并以终态事件收场（Error/Aborted 后必 End）。
-        if (options?.CancellationToken.CanBeCanceled == true)
-        {
-            // spec §5「Faux 分块中止」：SimpleStreamOptions.CancellationToken 与调用方
-            // token 取链，发射完成后释放链接源。
-            var linked = CancellationTokenSource
-                .CreateLinkedTokenSource(cancellationToken, options.CancellationToken);
-            _ = EmitWithLinkedAsync(stream, step, model, context, options, linked);
-        }
-        else
-        {
-            _ = EmitAsync(stream, step, model, context, options, cancellationToken);
-        }
+        var simpleOptions = options as SimpleStreamOptions;
+        var cancellationToken = options?.CancellationToken ?? default;
 
-        return Task.FromResult<IAssistantMessageEventStream>(stream);
-    }
-
-    private async Task EmitWithLinkedAsync(
-        AssistantMessageEventStream stream,
-        FauxResponseStep? step,
-        Model model,
-        TranscriptContext context,
-        SimpleStreamOptions? options,
-        CancellationTokenSource linked)
-    {
-        try
-        {
-            await EmitAsync(stream, step, model, context, options, linked.Token)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            linked.Dispose();
-        }
+        // fire-and-forget 安全：EmitAsync 所有抛错路径都在内部捕获并以终态事件收场。
+        _ = EmitAsync(stream, step, model, context, simpleOptions, cancellationToken);
+        return stream;
     }
 
     private async Task EmitAsync(
