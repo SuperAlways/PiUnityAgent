@@ -132,7 +132,7 @@ PiUnityAgent/
 - ✅ **S1 消息与内容模型**（已合 `main`）
 - ✅ **S2 流式事件协议**（已合 `main`）
 - ✅ **S3 Provider 抽象与 Faux + 对齐返工 v2**（`IProvider`/完整公共形状/自有 Fetch 端口/Auth 类型/LazyStream；feature 分支待用户验收合并）
-- ✅ **通讯底座 UnityLlmTransport Phase 0/1/2**（独立仓库，2026-11-07；2021.3/6.3/6.6 六组 15/15）
+- ✅ **通讯底座 UnityLlmTransport Phase 0/1/2**（独立仓库，2026-11-07；2021.3/6.3/6.6/2022.3.62f3c1 四版本 × Mono/IL2CPP = 8 组 15/15）
 - ✅ **2022.3.62f3c1 测试主基线已补测通过**（Mono/IL2CPP U1–U11 15/15）；游戏实际 f2 的最终游戏内验收属 S4
 - ⬜ **S4 OpenAI-compatible / DeepSeek**（S3 v2 已完成，随时可开工）
 - ⬜ Core MVP 设计 / S6–S8

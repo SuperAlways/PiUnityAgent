@@ -32,6 +32,7 @@
 | 上游 | 我们 | 说明 |
 |---|---|---|
 | `Provider` | `IProvider.cs` | 接口 + 可选能力接口；不用 DIM |
+| `Provider` capability methods | `ProviderCapabilities.cs` | `IRefreshableProvider` / `IDeferredProvider` / `IImagesProvider` / `IClassifierProvider`；不用 DIM |
 | `createProvider` | `StaticProvider.cs` | 静态 provider 骨架 |
 | `Models` | `Models.cs` + `Models.*.cs` | 注册/认证/流式/能力分 partial |
 | `auth/types.ts` | `Auth/*.cs` | 类型面；API Key 解析可用 |
