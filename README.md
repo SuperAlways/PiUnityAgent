@@ -5,7 +5,7 @@
 - **参照物**：[pi](https://github.com/earendil-works/pi) 的 `pi-ai` + `pi-agent-core`（不是 `pi-coding-agent`）
 - **语言/生态**：纯 C#，**不依赖 Node/Python 运行时**
 - **目标框架**：底座（Ai/Core/Runtime）= `netstandard2.1`（Unity 2021.2+ / 太吾 2022.3）；Hosts.Net8 = `net8.0`
-- **状态**：设计 / 调研阶段，尚无实现代码
+- **状态**：S1–S3 初版已实现并合入 `main`（127 项测试）；S3 形状返工（spec v2，B 通讯端口方案）待执行；通讯底座 `UnityLlmTransport` Phase 0/1/2 已完成（独立仓库）
 
 ---
 
@@ -55,6 +55,7 @@
 - **Core 是类库，不是进程**；"在下方"指依赖方向。
 - 主流 Unity 游戏只有一个 Unity 宿主；太吾绘卷因 mod 框架特殊，多一个 .NET 8 宿主（前端 Master / 后端 Slaver，管道 RPC）。
 - 同一份 Core 编译进两个宿主；双宿主是部署拓扑，不是框架假设。
+- **通讯层（B 方案，2026-11-07）**：`Ai` 只依赖自有的 `FetchFunction` 端口；`UnityLlmTransport` 作为实现/适配方由 `Hosts.Unity` / `Ext` 消费，`Ai` 不直接依赖。详见 `docs/07-通讯层集成契约.md`。
 
 ---
 
@@ -120,17 +121,22 @@ PiUnityAgent/
 |---|---|
 | **说书人**（上层使用者，另一仓库） | 上层扩展之一：感知查询、导演循环、案例 skills、控制 Intent、发布闸 |
 | **太吾药老** | 上层扩展之一：F8 问答、百晓册 skills、LightRAG 工具 |
+| **UnityLlmTransport**（独立仓库） | 通讯底座：UWR/HttpClient/SSE/取消/超时/主线程。按 B 方案，`Ai` 只依赖自有 Fetch 端口，Host 层适配器消费它；不直接依赖。见 `docs/07` |
 | **江湖有灵 / WorldTalk** | 反编译参考；其领域能力（过月编排、幂等日志、ActionTool 防幻觉）作为扩展设计参照，不照抄代码 |
 
 ---
 
-## 八、当前状态
+## 八、当前状态（2026-11-07）
 
-- ✅ 需求与边界已整理（`docs/00`）
-- ✅ C# 生态调研简报已备好，待外部 agent 联网核实（`docs/01`）
-- ⬜ 候选方案评估
-- ⬜ Core MVP 设计
-- ⬜ 第一个宿主（Unity）跑通
+- ✅ 需求与边界（`docs/00`）、C# 生态调研（`docs/01`）、Pi.NET 复用评估（`docs/02`）
+- ✅ **S1 消息与内容模型**（已合 `main`）
+- ✅ **S2 流式事件协议**（已合 `main`）
+- ✅ **S3 Provider 抽象与 Faux**（初版已合 `main`；累计 127 项测试）
+- 🟡 **S3 对齐返工 spec v2**：B 通讯端口方案，待 review → plan → 实施
+- ✅ **通讯底座 UnityLlmTransport Phase 0/1/2**（独立仓库，2026-11-07；6 组 15/15）
+- ⬜ **S4 OpenAI-compatible / DeepSeek**（S3 返工完成后开工）
+- ⬜ Core MVP 设计 / S6–S8
+- ⬜ S13 Unity 宿主
 - ⬜ 药老迁移验证
 
 ---

@@ -1,5 +1,7 @@
 # S3 概念篇 · Provider 抽象与 Faux
 
+> ⚠️ **初版教学篇（2026-11-07 注）**：S3 返工 v2 采用 B 通讯端口（`StreamOptions.Fetch` + `TransportKind`，见 `docs/07-通讯层集成契约.md`）。本文描述初版形状；返工落地后需同步更新，实现以 spec v2 为准。
+
 > **阶段**：S3（pi-ai provider 抽象 + Faux）。
 > **原则**：先理解"谁去说话、怎么找到它、没有网怎么办"；字段细节留给契约篇。
 > **上游**：pi `packages/ai/src/models.ts`、`packages/ai/src/providers/faux.ts`、`packages/ai/src/types.ts`（Model/Provider/StreamOptions）；pi.net `src/Pi.Ai/Models/Models.cs`、`src/Pi.Ai/Providers/Faux.cs`。
