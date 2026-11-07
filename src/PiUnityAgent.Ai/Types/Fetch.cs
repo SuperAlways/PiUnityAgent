@@ -54,9 +54,6 @@ public interface IFetchResponse : IAsyncDisposable
 
     /// <summary>立即中止底层连接；幂等。</summary>
     void Abort();
-
-    /// <summary>已发出的 Abort 次数（幂等下通常 0/1）；供宿主与测试观察中止是否落地。</summary>
-    int AbortCount { get; }
 }
 
 public enum FetchErrorKind
