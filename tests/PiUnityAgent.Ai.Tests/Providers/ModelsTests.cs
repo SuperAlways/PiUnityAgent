@@ -16,7 +16,7 @@ public class ModelsTests
             BaseUrl = "http://localhost:0",
         };
 
-    private static Provider CreateProvider(string id = "p1", StreamFn? stream = null)
+    private static Provider CreateProvider(string id = "p1", LegacyStreamFn? stream = null)
         => new()
         {
             Id = id,

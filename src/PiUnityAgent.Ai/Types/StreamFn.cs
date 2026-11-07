@@ -2,8 +2,8 @@ using PiUnityAgent.Ai.Events;
 
 namespace PiUnityAgent.Ai.Types;
 
-public delegate Task<IAssistantMessageEventStream> StreamFn(
+/// <summary>pi StreamFunction 的同步 C# 等价物；失败必须编码为流内终态，不抛。</summary>
+public delegate IAssistantMessageEventStream StreamFn(
     Model model,
     TranscriptContext context,
-    SimpleStreamOptions? options,
-    CancellationToken cancellationToken);
+    StreamOptions? options);
