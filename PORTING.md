@@ -27,7 +27,7 @@
 
 ## 1. M1 · PiUnityAgent.Ai（pi-ai 子集）
 
-> **S1/S2/S3 状态（2026-11-07）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版已合 `main`；S3 对齐返工 v2（IProvider/Fetch 端口/Auth 类型/LazyStream）已在 `feature/s3-rework-v2` 完成。详见 `docs/learning/S1-*`、`S2-*`、`S3-*` 与 v2 补充篇。
+> **S1/S2/S3 状态（2026-11-08）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版已合 `main`；S3 对齐返工 v2（IProvider/Fetch 端口/Auth 类型/LazyStream）已合 `main`（2026-11-08）。详见 `docs/learning/S1-*`、`S2-*`、`S3-*` 与 v2 补充篇。
 
 | 上游文件 | 我们的文件 | 状态 | 偏离说明 |
 |---|---|---|---|
