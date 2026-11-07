@@ -1,58 +1,24 @@
 using PiUnityAgent.Ai.Events;
 using PiUnityAgent.Ai.Providers;
+using PiUnityAgent.Ai.Providers.Auth;
 using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Tests.Providers;
 
 public class ModelsTests
 {
-    private static Model CreateModel(string id = "m1", string provider = "p1")
-        => new()
-        {
-            Id = id,
-            Name = id,
-            Api = "test",
-            Provider = provider,
-            BaseUrl = "http://localhost:0",
-        };
-
-    private static Provider CreateProvider(string id = "p1", LegacyStreamFn? stream = null)
-        => new()
-        {
-            Id = id,
-            Name = id,
-            Models = new[] { CreateModel("m1", id) },
-            Stream = stream ?? ((model, context, options, ct) =>
-            {
-                var stream = new AssistantMessageEventStream();
-                var message = new AssistantMessage
-                {
-                    Content = Array.Empty<ContentBlock>(),
-                    Api = model.Api,
-                    Provider = model.Provider,
-                    Model = model.Id,
-                    Usage = new Usage(),
-                    StopReason = StopReason.Stop,
-                    Timestamp = 1,
-                };
-                stream.Push(new AssistantMessageEvent.Done(StopReason.Stop, message));
-                stream.End(message);
-                return Task.FromResult<IAssistantMessageEventStream>(stream);
-            }),
-        };
-
     [Fact]
     public void Set_Get_Replace_Delete_Provider()
     {
         var models = new Models();
-        var first = CreateProvider();
+        var first = ProviderTestSupport.CreateProvider();
         models.SetProvider(first);
 
         Assert.Same(first, models.GetProvider("p1"));
         Assert.Single(models.GetModels());
         Assert.NotNull(models.GetModel("p1", "m1"));
 
-        var replacement = CreateProvider();
+        var replacement = ProviderTestSupport.CreateProvider();
         models.SetProvider(replacement);
         Assert.Same(replacement, models.GetProvider("p1"));
         Assert.True(models.DeleteProvider("p1"));
@@ -63,57 +29,104 @@ public class ModelsTests
     public void GetModels_Filters_By_Provider()
     {
         var models = new Models();
-        models.SetProvider(CreateProvider("p1"));
-        models.SetProvider(CreateProvider("p2"));
+        models.SetProvider(ProviderTestSupport.CreateProvider("p1"));
+        models.SetProvider(ProviderTestSupport.CreateProvider("p2"));
 
         Assert.Single(models.GetModels("p1"));
         Assert.Equal(2, models.GetModels().Count);
     }
 
     [Fact]
-    public async Task StreamSimple_Dispatches_To_Provider()
+    public void GetModelsOfType_And_GetModelOfType_Filter_Chat_Models()
     {
         var models = new Models();
-        var called = false;
-        models.SetProvider(CreateProvider(stream: (model, context, options, ct) =>
-        {
-            called = true;
-            var stream = new AssistantMessageEventStream();
-            var message = new AssistantMessage
-            {
-                Content = Array.Empty<ContentBlock>(),
-                Api = model.Api,
-                Provider = model.Provider,
-                Model = model.Id,
-                Usage = new Usage(),
-                StopReason = StopReason.Stop,
-                Timestamp = 1,
-            };
-            stream.Push(new AssistantMessageEvent.Done(StopReason.Stop, message));
-            stream.End(message);
-            return Task.FromResult<IAssistantMessageEventStream>(stream);
-        }));
+        models.SetProvider(ProviderTestSupport.CreateProvider("p1"));
 
-        var result = await models.StreamSimpleAsync(
-            CreateModel(),
-            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
-        var done = await result.WaitForDoneAsync();
-
-        Assert.True(called);
-        Assert.Equal(StopReason.Stop, done.StopReason);
+        Assert.Single(models.GetModelsOfType(ModelType.Chat));
+        Assert.NotNull(models.GetModelOfType(ModelType.Chat, "p1", "m1"));
+        Assert.Empty(models.GetModelsOfType(ModelType.Image));
     }
 
     [Fact]
-    public async Task StreamSimple_Unknown_Provider_Returns_Error_Event()
+    public void GetAllModels_Returns_All_Provider_Models()
     {
         var models = new Models();
-        var stream = await models.StreamSimpleAsync(
-            CreateModel(provider: "missing"),
-            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+        models.SetProvider(ProviderTestSupport.CreateProvider("p1"));
+
+        Assert.Single(models.GetAllModels());
+        Assert.Equal("m1", models.GetAllModels("p1")[0].Id);
+    }
+
+    [Fact]
+    public void ClearProviders_Empties_Registry()
+    {
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider());
+        models.ClearProviders();
+
+        Assert.Empty(models.GetProviders());
+        Assert.Empty(models.GetModels());
+    }
+
+    [Fact]
+    public async Task Stream_Dispatches_And_Normalizes_Context()
+    {
+        TranscriptContext? seenContext = null;
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider(stream: (model, context, options) =>
+        {
+            seenContext = context;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+        var model = ProviderTestSupport.CreateModel();
+        var tool = new Tool
+        {
+            Name = "query_hp",
+            Description = "Query HP",
+            Parameters = new System.Text.Json.Nodes.JsonObject { ["type"] = "object" },
+        };
+        var context = new Context
+        {
+            SystemPrompt = "sys",
+            Messages = new Message[] { new UserMessage { Timestamp = 1, Content = MessageContent.From("hi") } },
+            Tools = new[] { tool },
+        };
+
+        var stream = models.Stream(model, context);
+        var events = await ProviderTestSupport.CollectAsync(stream);
+
+        var system = Assert.IsType<SystemMessage>(seenContext!.Messages[0]);
+        Assert.Equal("sys", Assert.IsType<MessageContent.Text>(system.Content).Value);
+        Assert.Single(system.ToolsAdded!);
+        Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+    }
+
+    [Fact]
+    public void Stream_Is_Lazy_Until_Consumed()
+    {
+        var called = false;
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider(stream: (model, context, options) =>
+        {
+            called = true;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() });
+
+        Assert.False(called);
+        Assert.NotNull(stream);
+    }
+
+    [Fact]
+    public async Task Unknown_Provider_Returns_Error_Stream()
+    {
+        var models = new Models();
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(provider: "missing"),
+            new Context { Messages = Array.Empty<Message>() });
         var done = await stream.WaitForDoneAsync();
 
         Assert.Equal(StopReason.Error, done.StopReason);
@@ -121,17 +134,15 @@ public class ModelsTests
     }
 
     [Fact]
-    public async Task StreamSimple_Provider_Throws_Returns_Error_Event()
+    public async Task Provider_Throws_Returns_Error_Stream()
     {
         var models = new Models();
-        models.SetProvider(CreateProvider(stream: (model, context, options, ct) =>
+        models.SetProvider(ProviderTestSupport.CreateProvider(stream: (_, _, _) =>
             throw new InvalidOperationException("boom")));
 
-        var stream = await models.StreamSimpleAsync(
-            CreateModel(),
-            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() });
         var done = await stream.WaitForDoneAsync();
 
         Assert.Equal(StopReason.Error, done.StopReason);
@@ -139,21 +150,68 @@ public class ModelsTests
     }
 
     [Fact]
-    public async Task StreamSimple_Provider_Throws_OperationCanceled_Returns_Aborted()
+    public async Task Provider_Throws_OperationCanceled_Returns_Error_Like_Pi()
     {
         var models = new Models();
-        models.SetProvider(CreateProvider(stream: (model, context, options, ct) =>
+        models.SetProvider(ProviderTestSupport.CreateProvider(stream: (_, _, _) =>
             throw new OperationCanceledException()));
 
-        var stream = await models.StreamSimpleAsync(
-            CreateModel(),
-            new TranscriptContext { Messages = Array.Empty<PiUnityAgent.Ai.Types.Message>() },
-            null,
-            CancellationToken.None);
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() });
         var done = await stream.WaitForDoneAsync();
 
-        // 取消 ≠ 失败：OCE 不得落入通用 catch，终态必须是 Aborted。
-        Assert.Equal(StopReason.Aborted, done.StopReason);
-        Assert.Equal("Request was aborted", done.ErrorMessage);
+        // LazyStream setup 异常统一 Error；Aborted 由 provider 内层流负责。
+        Assert.Equal(StopReason.Error, done.StopReason);
+    }
+
+    [Fact]
+    public async Task StreamSimple_Passes_SimpleOptions_And_Dispatches()
+    {
+        SimpleStreamOptions? seenOptions = null;
+        var models = new Models();
+        var provider = ProviderTestSupport.CreateProvider(stream: (model, context, options) =>
+        {
+            seenOptions = options as SimpleStreamOptions;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        });
+        models.SetProvider(provider);
+        var simple = new SimpleStreamOptions { ThinkingLevel = ModelThinkingLevel.High };
+
+        var stream = models.StreamSimple(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() },
+            simple);
+        var events = await ProviderTestSupport.CollectAsync(stream);
+
+        Assert.Equal(ModelThinkingLevel.High, seenOptions!.ThinkingLevel);
+        Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_Returns_Final_Message()
+    {
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider());
+
+        var message = await models.CompleteAsync(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() });
+
+        Assert.Equal(StopReason.Stop, message.StopReason);
+    }
+
+    [Fact]
+    public async Task CompleteSimpleAsync_Returns_Final_Message()
+    {
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider());
+
+        var message = await models.CompleteSimpleAsync(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() },
+            new SimpleStreamOptions());
+
+        Assert.Equal(StopReason.Stop, message.StopReason);
     }
 }

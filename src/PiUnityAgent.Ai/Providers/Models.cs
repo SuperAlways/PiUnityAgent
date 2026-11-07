@@ -1,33 +1,27 @@
-using PiUnityAgent.Ai.Events;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using PiUnityAgent.Ai.Providers.Auth;
 using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Providers;
 
-public interface IModels
-{
-    IReadOnlyList<Provider> Providers { get; }
-    Provider? GetProvider(string id);
-    IReadOnlyList<Model> GetModels(string? provider = null);
-    Model? GetModel(string provider, string id);
-    Task<IAssistantMessageEventStream> StreamSimpleAsync(
-        Model model,
-        TranscriptContext context,
-        SimpleStreamOptions? options,
-        CancellationToken cancellationToken);
-}
-
-public sealed class Models : IModels
+public sealed partial class Models
 {
     private readonly object _gate = new();
-    private readonly Dictionary<string, Provider> _providers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IProvider> _providers = new(StringComparer.Ordinal);
+    private readonly CredentialStore _credentials;
+    private readonly AuthContext _authContext;
 
-    public IReadOnlyList<Provider> Providers
+    public Models(CredentialStore? credentials = null, AuthContext? authContext = null)
     {
-        get { lock (_gate) return _providers.Values.ToList(); }
+        _credentials = credentials ?? new InMemoryCredentialStore();
+        _authContext = authContext ?? new AuthContext();
     }
 
-    public void SetProvider(Provider provider)
+    public void SetProvider(IProvider provider)
     {
+        if (provider is null) throw new ArgumentNullException(nameof(provider));
         lock (_gate) _providers[provider.Id] = provider;
     }
 
@@ -41,74 +35,61 @@ public sealed class Models : IModels
         lock (_gate) _providers.Clear();
     }
 
-    public Provider? GetProvider(string id)
+    public IReadOnlyList<IProvider> GetProviders()
+    {
+        lock (_gate) return _providers.Values.ToList();
+    }
+
+    public IProvider? GetProvider(string id)
     {
         lock (_gate) return _providers.TryGetValue(id, out var provider) ? provider : null;
     }
 
     public IReadOnlyList<Model> GetModels(string? provider = null)
     {
-        lock (_gate)
+        if (provider is not null)
         {
-            if (provider is not null)
-            {
-                return _providers.TryGetValue(provider, out var found)
-                    ? found.Models.ToList()
-                    : Array.Empty<Model>();
-            }
-
-            return _providers.Values.SelectMany(p => p.Models).ToList();
+            var found = GetProvider(provider);
+            return found is null ? Array.Empty<Model>() : SafeChatModels(found);
         }
+
+        return GetProviders().SelectMany(SafeChatModels).ToList();
     }
 
     public Model? GetModel(string provider, string id)
-        => GetProvider(provider)?.Models.FirstOrDefault(m => m.Id == id);
-
-    public async Task<IAssistantMessageEventStream> StreamSimpleAsync(
-        Model model,
-        TranscriptContext context,
-        SimpleStreamOptions? options,
-        CancellationToken cancellationToken)
     {
-        var provider = GetProvider(model.Provider);
-        if (provider is null)
-            return ErrorStream(model, $"Unknown provider: {model.Provider}");
-
-        try
-        {
-            return await provider.Stream(model, context, options, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // 取消 ≠ 失败（S2 契约）：OCE 编码为 Aborted 终态事件，不得落入通用 catch。
-            return ErrorStream(model, "Request was aborted", StopReason.Aborted);
-        }
-        catch (Exception error)
-        {
-            return ErrorStream(model, error.Message);
-        }
+        var found = GetProvider(provider);
+        return found is null
+            ? null
+            : SafeChatModels(found).FirstOrDefault(model => model.Id == id);
     }
 
-    private static IAssistantMessageEventStream ErrorStream(
-        Model model,
-        string message,
-        StopReason reason = StopReason.Error)
+    public IReadOnlyList<ProviderModel> GetModelsOfType(ModelType type, string? provider = null)
+        => GetAllModels(provider).Where(model => model.Type == type).ToList();
+
+    public ProviderModel? GetModelOfType(ModelType type, string provider, string id)
+        => GetAllModels(provider).FirstOrDefault(model => model.Type == type && model.Id == id);
+
+    public IReadOnlyList<ProviderModel> GetAllModels(string? provider = null)
     {
-        var stream = new AssistantMessageEventStream();
-        var assistant = new AssistantMessage
+        if (provider is not null)
         {
-            Content = Array.Empty<ContentBlock>(),
-            Api = model.Api,
-            Provider = model.Provider,
-            Model = model.Id,
-            Usage = new Usage(),
-            StopReason = reason,
-            ErrorMessage = message,
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-        };
-        stream.Push(new AssistantMessageEvent.Error(reason, assistant));
-        stream.End(assistant);
-        return stream;
+            var found = GetProvider(provider);
+            return found is null ? Array.Empty<ProviderModel>() : SafeAllModels(found);
+        }
+
+        return GetProviders().SelectMany(SafeAllModels).ToList();
+    }
+
+    private static IReadOnlyList<Model> SafeChatModels(IProvider provider)
+    {
+        try { return provider.GetModels().ToList(); }
+        catch { return Array.Empty<Model>(); }
+    }
+
+    private static IReadOnlyList<ProviderModel> SafeAllModels(IProvider provider)
+    {
+        try { return provider.GetAllModels().ToList(); }
+        catch { return Array.Empty<ProviderModel>(); }
     }
 }

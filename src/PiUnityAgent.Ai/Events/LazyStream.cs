@@ -8,8 +8,9 @@ namespace PiUnityAgent.Ai.Events;
 public static class LazyStream
 {
     /// <summary>
-    /// 同步返回 outer 流；返回时立即启动 factory。factory 只启动一次。
-    /// setup 失败（含 OCE）统一为 Error(Error)；Aborted 由 provider 内层流负责。
+    /// 同步返回 outer 流；返回即调度 factory（Task.Run，与 pi.net Api/Lazy.cs 一致：
+    /// setup 在同步返回之后异步运行，调用方拿到的瞬间 provider 尚未被调用）。
+    /// factory 只启动一次。setup 失败（含 OCE）统一为 Error(Error)；Aborted 由 provider 内层流负责。
     /// 对应 pi api/lazy.ts 与 pi.net Api/Lazy.cs。
     /// </summary>
     public static IAssistantMessageEventStream Run(
@@ -24,7 +25,7 @@ public static class LazyStream
         var outer = new AssistantMessageEventStream();
 
         // fire-and-forget：ForwardAsync 内部捕获所有异常并以终态事件收场。
-        _ = ForwardAsync(outer, model, factory, startedAt);
+        _ = Task.Run(() => ForwardAsync(outer, model, factory, startedAt));
         return outer;
     }
 
