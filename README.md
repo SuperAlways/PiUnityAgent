@@ -134,7 +134,7 @@ PiUnityAgent/
 - ✅ **S3 Provider 抽象与 Faux**（初版已合 `main`；累计 127 项测试）
 - 🟡 **S3 对齐返工 spec v2**：B 通讯端口方案，待 review → plan → 实施
 - ✅ **通讯底座 UnityLlmTransport Phase 0/1/2**（独立仓库，2026-11-07；2021.3/6.3/6.6 六组 15/15）
-- 🟡 **2022.3.62f3c1 测试主基线补测**：Hub 编辑器下载/安装中（游戏实际 f2）；S4 实机前完成（UnityLlmTransport Phase 2 follow-up）
+- ✅ **2022.3.62f3c1 测试主基线已补测通过**（Mono/IL2CPP U1–U11 15/15）；游戏实际 f2 的最终游戏内验收属 S4
 - ⬜ **S4 OpenAI-compatible / DeepSeek**（S3 返工完成后开工）
 - ⬜ Core MVP 设计 / S6–S8
 - ⬜ S13 Unity 宿主
