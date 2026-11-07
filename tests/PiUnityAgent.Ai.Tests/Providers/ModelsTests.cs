@@ -102,22 +102,33 @@ public class ModelsTests
     }
 
     [Fact]
-    public void Stream_Is_Lazy_Until_Consumed()
+    public async Task Stream_Returns_Before_Setup_Completes()
     {
-        var called = false;
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
         var models = new Models();
         models.SetProvider(ProviderTestSupport.CreateProvider(stream: (model, context, options) =>
         {
-            called = true;
+            started.Set();
+            release.Wait(TimeSpan.FromSeconds(5));
             return ProviderTestSupport.DoneStream(model, context, options);
         }));
 
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var stream = models.Stream(
             ProviderTestSupport.CreateModel(),
             new Context { Messages = Array.Empty<Message>() });
+        stopwatch.Stop();
 
-        Assert.False(called);
         Assert.NotNull(stream);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1),
+            "Models.Stream must not block on setup");
+        Assert.True(started.Wait(TimeSpan.FromSeconds(5)),
+            "LazyStream must start setup eagerly");
+
+        release.Set();
+        var done = await stream.WaitForDoneAsync();
+        Assert.Equal(StopReason.Stop, done.StopReason);
     }
 
     [Fact]
