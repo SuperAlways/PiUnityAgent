@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -77,6 +79,79 @@ public class AnthropicMessagesTests
 
     private static string Sse(params string[] dataPayloads)
         => string.Concat(dataPayloads.Select(payload => $"data: {payload}\n\n"));
+
+    // ------------------------------------------------------------------
+    // Anthropic 命名 SSE 事件构造（真实线路是 event: 行 + data 行；Task 3 按 event 字段分派）
+    // ------------------------------------------------------------------
+
+    private static string SseNamed(string eventName, JsonObject data)
+        => $"event: {eventName}\ndata: {data.ToJsonString()}\n\n";
+
+    private static string AnthropicSse(params string[] events) => string.Concat(events);
+
+    private static string MessageStart(
+        string responseId = "msg_1",
+        string? responseModel = null,
+        JsonObject? usage = null)
+        => SseNamed("message_start", new JsonObject
+        {
+            ["type"] = "message_start",
+            ["message"] = new JsonObject
+            {
+                ["id"] = responseId,
+                ["type"] = "message",
+                ["role"] = "assistant",
+                ["model"] = responseModel ?? "claude-test",
+                ["usage"] = usage ?? new JsonObject { ["input_tokens"] = 4, ["output_tokens"] = 1 },
+            },
+        });
+
+    private static string ContentBlockStart(int index, JsonObject block)
+        => SseNamed("content_block_start", new JsonObject
+        {
+            ["type"] = "content_block_start",
+            ["index"] = index,
+            ["content_block"] = block,
+        });
+
+    private static string ContentBlockDelta(int index, JsonObject delta)
+        => SseNamed("content_block_delta", new JsonObject
+        {
+            ["type"] = "content_block_delta",
+            ["index"] = index,
+            ["delta"] = delta,
+        });
+
+    private static string TextDelta(int index, string text)
+        => ContentBlockDelta(index, new JsonObject { ["type"] = "text_delta", ["text"] = text });
+
+    private static string ThinkingDelta(int index, string thinking)
+        => ContentBlockDelta(index, new JsonObject { ["type"] = "thinking_delta", ["thinking"] = thinking });
+
+    private static string SignatureDelta(int index, string signature)
+        => ContentBlockDelta(index, new JsonObject { ["type"] = "signature_delta", ["signature"] = signature });
+
+    private static string JsonDelta(int index, string partialJson)
+        => ContentBlockDelta(index, new JsonObject { ["type"] = "input_json_delta", ["partial_json"] = partialJson });
+
+    private static string ContentBlockStop(int index)
+        => SseNamed("content_block_stop", new JsonObject { ["type"] = "content_block_stop", ["index"] = index });
+
+    private static string MessageDelta(string? stopReason, JsonObject? usage = null, JsonObject? stopDetails = null)
+    {
+        var delta = new JsonObject();
+        if (stopReason is not null) delta["stop_reason"] = stopReason;
+        if (stopDetails is not null) delta["stop_details"] = stopDetails;
+        var @event = new JsonObject { ["type"] = "message_delta", ["delta"] = delta };
+        if (usage is not null) @event["usage"] = usage;
+        return SseNamed("message_delta", @event);
+    }
+
+    private static string MessageStop()
+        => SseNamed("message_stop", new JsonObject { ["type"] = "message_stop" });
+
+    private static List<string> EventTypes(IReadOnlyList<AssistantMessageEvent> events)
+        => events.Select(@event => @event.Type).ToList();
 
     private static async Task<List<AssistantMessageEvent>> CollectAsync(IAssistantMessageEventStream stream)
     {
@@ -186,7 +261,8 @@ public class AnthropicMessagesTests
                 },
             }));
 
-        Assert.Equal(new[] { "error" }, events.Select(@event => @event.Type));
+        // 空 SSE 体 → start 推出后流终止于 Error（pi：start 在消费前推）。
+        Assert.Equal(new[] { "start", "error" }, events.Select(@event => @event.Type));
         Assert.False(fetch.Requests[0].Headers.ContainsKey("anthropic-version"));
         Assert.Equal("1", fetch.Requests[0].Headers["x-custom"]);
     }
@@ -695,14 +771,16 @@ public class AnthropicMessagesTests
         {
             StatusCode = 429,
         });
-        fetch.EnqueueText(Sse(), headers: SseHeaders());
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
         var events = await CollectAsync(AnthropicMessages.Stream(
             CreateModel(),
             Context(UserMsg("hi")),
             CreateOptions(fetch) with { MaxRetries = 1, MaxRetryDelayMs = 1 }));
 
+        // 429 在流建立前命中 ProviderRetry → 第二次尝试成功，SSE 被真正消费到 done。
         Assert.Equal(2, fetch.Requests.Count);
-        Assert.Equal(new[] { "error" }, events.Select(@event => @event.Type));
+        Assert.Equal(new[] { "start", "done" }, events.Select(@event => @event.Type));
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
     }
 
     [Fact]
@@ -752,27 +830,27 @@ public class AnthropicMessagesTests
     }
 
     [Fact]
-    public async Task OnResponse_Fires_After_Response_Before_Terminal_Error()
+    public async Task OnResponse_Fires_After_Response_Before_Stream_Events()
     {
         var fetch = new MockFetch();
-        fetch.EnqueueText(Sse(), headers: SseHeaders());
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
         var onResponseCount = 0;
         var events = await CollectAsync(AnthropicMessages.Stream(
             CreateModel(),
             Context(UserMsg("hi")),
-            CreateOptions(fetch) with
+            CreateOptions(fetch, new AnthropicOptions
             {
                 OnResponse = (_, _) =>
                 {
                     Interlocked.Increment(ref onResponseCount);
                     return Task.CompletedTask;
                 },
-            }));
+            })));
 
+        // OnResponse 恰 1 次、在流事件消费之前（start 之后才推事件）。
         Assert.Equal(1, Volatile.Read(ref onResponseCount));
-        // Task 2 边界：请求已建立（可被 MockFetch 观测），SSE 状态机归 Task 3，这里终态 Error。
-        Assert.Equal(new[] { "error" }, events.Select(@event => @event.Type));
-        Assert.Contains("Task 3", Assert.IsType<AssistantMessageEvent.Error>(events[^1]).Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(new[] { "start", "done" }, events.Select(@event => @event.Type));
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
     }
 
     // ------------------------------------------------------------------
@@ -866,5 +944,608 @@ public class AnthropicMessagesTests
             new AnthropicOptions { ThinkingEnabled = false },
             new AnthropicMessagesCompat { SupportsMidConvoEffort = true });
         Assert.Null(disabled.ProviderThinkingLevel);
+    }
+
+    // ------------------------------------------------------------------
+    // SSE 状态机（Task 3）：命名事件 → 统一流事件 / usage / 终态
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task Text_Stream()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "text", ["text"] = "" }),
+            TextDelta(0, "Hello"),
+            TextDelta(0, " world"),
+            ContentBlockStop(0),
+            MessageDelta("end_turn", new JsonObject { ["output_tokens"] = 4 }),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        Assert.Equal(
+            new[] { "start", "text_start", "text_delta", "text_delta", "text_end", "done" },
+            EventTypes(events));
+
+        var textStart = Assert.IsType<AssistantMessageEvent.TextStart>(events[1]);
+        Assert.Equal(0, textStart.ContentIndex);
+        Assert.Equal("Hello", Assert.IsType<AssistantMessageEvent.TextDelta>(events[2]).Delta);
+        var textEnd = Assert.IsType<AssistantMessageEvent.TextEnd>(events[4]);
+        Assert.Equal(0, textEnd.ContentIndex);
+        Assert.Equal("Hello world", textEnd.Content);
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(StopReason.Stop, done.Reason);
+        Assert.Equal("Hello world", Assert.IsType<TextContent>(done.Message.Content[0]).Text);
+        Assert.Equal("msg_1", done.Message.ResponseId);
+        // message_delta 的 output_tokens 覆盖 message_start 初值；total 按分量合计（Anthropic 不报 total）。
+        Assert.Equal(4, done.Message.Usage.Output);
+        Assert.Equal(8, done.Message.Usage.TotalTokens);
+    }
+
+    [Fact]
+    public async Task Thinking_And_Signature()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "thinking", ["thinking"] = "", ["signature"] = "" }),
+            ThinkingDelta(0, "ponder"),
+            SignatureDelta(0, "sig-9"),
+            ContentBlockStop(0),
+            MessageDelta("end_turn"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // signature_delta 只回填块上的签名，不推流事件（pi 同）。
+        Assert.Equal(
+            new[] { "start", "thinking_start", "thinking_delta", "thinking_end", "done" },
+            EventTypes(events));
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        var thinking = Assert.IsType<ThinkingContent>(done.Message.Content[0]);
+        Assert.Equal("ponder", thinking.Thinking);
+        Assert.Equal("sig-9", thinking.ThinkingSignature);
+        Assert.Null(thinking.Redacted);
+    }
+
+    [Fact]
+    public async Task Redacted_Thinking_Starts_Thinking_Block_With_Opaque_Data()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "redacted_thinking", ["data"] = "encrypted-payload" }),
+            ContentBlockStop(0),
+            MessageDelta("end_turn"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        Assert.Equal(
+            new[] { "start", "thinking_start", "thinking_end", "done" },
+            EventTypes(events));
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        var thinking = Assert.IsType<ThinkingContent>(done.Message.Content[0]);
+        Assert.True(thinking.Redacted);
+        Assert.Equal("[Reasoning redacted]", thinking.Thinking);
+        Assert.Equal("encrypted-payload", thinking.ThinkingSignature);
+    }
+
+    [Fact]
+    public async Task Tool_Use_Input_Json_Delta()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject
+            {
+                ["type"] = "tool_use",
+                ["id"] = "toolu_1",
+                ["name"] = "get_weather",
+                ["input"] = new JsonObject(),
+            }),
+            JsonDelta(0, "{\"city\""),
+            JsonDelta(0, ":\"SF\"}"),
+            ContentBlockStop(0),
+            MessageDelta("tool_use"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        Assert.Equal(
+            new[] { "start", "toolcall_start", "toolcall_delta", "toolcall_delta", "toolcall_end", "done" },
+            EventTypes(events));
+
+        var end = Assert.IsType<AssistantMessageEvent.ToolCallEnd>(events[^2]);
+        Assert.Equal(0, end.ContentIndex);
+        Assert.Equal("toolu_1", end.ToolCall.Id);
+        Assert.Equal("get_weather", end.ToolCall.Name);
+        Assert.Null(end.ToolCall.ArgumentsError);
+        Assert.Equal("SF", end.ToolCall.Arguments["city"]?.GetValue<string>());
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(StopReason.ToolUse, done.Reason);
+        Assert.Equal("tool_use", done.Message.RawStopReason);
+    }
+
+    [Fact]
+    public async Task Tool_Invalid_Argument_Json_Lands_ArgumentsError()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject
+            {
+                ["type"] = "tool_use",
+                ["id"] = "toolu_1",
+                ["name"] = "get_weather",
+                ["input"] = new JsonObject(),
+            }),
+            JsonDelta(0, "{\"city\":"),
+            ContentBlockStop(0),
+            MessageDelta("tool_use"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // pi parseToolCallArguments：非法参数 JSON 不失败流，落 argumentsError（含已收文本）。
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        var toolCall = Assert.IsType<ToolCall>(done.Message.Content[0]);
+        Assert.NotNull(toolCall.ArgumentsError);
+        Assert.Contains("Received arguments", toolCall.ArgumentsError, StringComparison.Ordinal);
+        Assert.Equal(StopReason.ToolUse, done.Reason);
+    }
+
+    [Fact]
+    public async Task Usage_Cache_Read_Write_And_One_Hour()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject
+            {
+                ["input_tokens"] = 100,
+                ["output_tokens"] = 2,
+                ["cache_read_input_tokens"] = 20,
+                ["cache_creation_input_tokens"] = 5,
+                ["cache_creation"] = new JsonObject { ["ephemeral_1h_input_tokens"] = 2 },
+            }),
+            MessageDelta("end_turn", new JsonObject { ["output_tokens"] = 10 }),
+            MessageStop()), headers: SseHeaders());
+
+        var model = CreateModel() with { Cost = new ModelCost(3, 15, 0.3, 0.6) };
+        var events = await CollectAsync(AnthropicMessages.Stream(model, Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        var usage = done.Message.Usage;
+        Assert.Equal(100, usage.Input);
+        Assert.Equal(10, usage.Output);
+        Assert.Equal(20, usage.CacheRead);
+        Assert.Equal(5, usage.CacheWrite);
+        Assert.Equal(2, usage.CacheWrite1h);
+        Assert.Equal(135, usage.TotalTokens);
+
+        // 1h 写入按 2×input 价、short 写入按 cacheWrite 价（pi calculateCost 同式）。
+        Assert.Equal(3.0 / 1_000_000 * 100, usage.Cost.Input, 12);
+        Assert.Equal(15.0 / 1_000_000 * 10, usage.Cost.Output, 12);
+        Assert.Equal(0.3 / 1_000_000 * 20, usage.Cost.CacheRead, 12);
+        Assert.Equal((0.6 * 3 + 3.0 * 2 * 2) / 1_000_000, usage.Cost.CacheWrite, 12);
+    }
+
+    [Fact]
+    public async Task Fallback_Model_Response_Switches_Cost_Source()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(responseId: "msg_fb", responseModel: "claude-fallback"),
+            MessageDelta("end_turn"),
+            MessageStop()), headers: SseHeaders());
+
+        var model = CreateModel(compat: new JsonObject
+        {
+            ["allowedFallbackModels"] = new JsonArray(new JsonObject
+            {
+                ["provider"] = "anthropic",
+                ["model"] = "claude-fallback",
+                ["cost"] = new JsonObject { ["input"] = 6.0, ["output"] = 30.0, ["cacheRead"] = 0.6, ["cacheWrite"] = 1.2 },
+            }),
+        }) with { Cost = new ModelCost(3, 15, 0.3, 0.6) };
+        var events = await CollectAsync(AnthropicMessages.Stream(model, Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // 服务端 fallback 模型接手：计价改用 allowedFallbackModels 里该模型的 cost（pi usageModel）。
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal("claude-fallback", done.Message.ResponseModel);
+        Assert.Equal(6.0 / 1_000_000 * done.Message.Usage.Input, done.Message.Usage.Cost.Input, 12);
+    }
+
+    [Fact]
+    public async Task Stop_Reason_Map()
+    {
+        // max_tokens → Length。
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("max_tokens"), MessageStop()), headers: SseHeaders());
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+        Assert.Equal(StopReason.Length, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+
+        // refusal → 终态 Error，错误消息取 stop_details.explanation。
+        var refusalFetch = new MockFetch();
+        refusalFetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            MessageDelta("refusal", stopDetails: new JsonObject { ["explanation"] = "cannot help with that" }),
+            MessageStop()), headers: SseHeaders());
+        var refusalEvents = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(refusalFetch)));
+        var refusalError = Assert.IsType<AssistantMessageEvent.Error>(refusalEvents[^1]);
+        Assert.Equal(StopReason.Error, refusalError.Reason);
+        Assert.Equal("cannot help with that", refusalError.Message.ErrorMessage);
+
+        // sensitive → 终态 Error。
+        var sensitiveFetch = new MockFetch();
+        sensitiveFetch.EnqueueText(
+            AnthropicSse(MessageStart(), MessageDelta("sensitive"), MessageStop()), headers: SseHeaders());
+        var sensitiveEvents = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(sensitiveFetch)));
+        Assert.Equal(
+            "Provider stopped with: sensitive",
+            Assert.IsType<AssistantMessageEvent.Error>(sensitiveEvents[^1]).Message.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Missing_Stop_Is_Error()
+    {
+        // message_stop 到了但没带 stop_reason：pending 判错，partial 文本保留。
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "text", ["text"] = "" }),
+            TextDelta(0, "partial"),
+            ContentBlockStop(0),
+            MessageStop()), headers: SseHeaders());
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+        var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("ended without a stop reason", error.Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal("partial", Assert.IsType<TextContent>(error.Message.Content[0]).Text);
+
+        // message_start 后流被截断（无 message_stop）：截断判错，partial 同样保留。
+        var truncated = new MockFetch();
+        truncated.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "text", ["text"] = "" }),
+            TextDelta(0, "partial")), headers: SseHeaders());
+        var truncatedEvents = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(truncated)));
+        var truncatedError = Assert.IsType<AssistantMessageEvent.Error>(truncatedEvents[^1]);
+        Assert.Contains("ended before message_stop", truncatedError.Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal("partial", Assert.IsType<TextContent>(truncatedError.Message.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Sse_Error_Event_Is_Terminal_Error()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+            headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // 命名 error 事件 = 服务端中途故障：start 已推，终态 Error。
+        Assert.Equal(new[] { "start", "error" }, EventTypes(events));
+        var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("Overloaded", error.Message.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ping_And_Unknown_Named_Events_Are_Ignored()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+            "event: something_new\ndata: {\"type\":\"something_new\"}\n\n",
+            MessageStart(),
+            "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+            MessageDelta("end_turn"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // ping / 未知命名事件照 pi 静默跳过，不影响事件序列。
+        Assert.Equal(new[] { "start", "done" }, EventTypes(events));
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+    }
+
+    [Fact]
+    public async Task Cancel_Is_Aborted_Keeps_Partial()
+    {
+        var cts = new CancellationTokenSource();
+        var fetch = new MockFetch();
+        var head = AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "text", ["text"] = "" }),
+            TextDelta(0, "partial"));
+        fetch.Enqueue((_, _, _) => Task.FromResult<IFetchResponse>(new TestFetchResponse(
+            200,
+            new FetchHeaders(new Dictionary<string, string?> { ["content-type"] = "text/event-stream" }),
+            new CancelBlockingStream(head, cts))));
+
+        var options = CreateOptions(fetch) with { CancellationToken = cts.Token };
+        var stream = AnthropicMessages.Stream(CreateModel(), Context(UserMsg("hi")), options);
+
+        var events = new List<AssistantMessageEvent>();
+        await foreach (var @event in stream)
+        {
+            events.Add(@event);
+            if (@event is AssistantMessageEvent.TextDelta)
+            {
+                cts.Cancel();
+            }
+        }
+
+        Assert.Equal(
+            new[] { "start", "text_start", "text_delta", "error" },
+            EventTypes(events));
+        var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
+        Assert.Equal(StopReason.Aborted, error.Reason);
+        Assert.Equal("Request was aborted", error.Message.ErrorMessage);
+        Assert.Equal("partial", Assert.IsType<TextContent>(error.Message.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Stream_Failure_After_Start_Is_Terminal_Without_Resend()
+    {
+        var fetch = new MockFetch();
+        // 流建立后中途截断：绝不重发（哪怕带 prefer strict 工具、MaxRetries=3）。
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn")), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(compat: new JsonObject { ["supportsStrictTools"] = true }),
+            Context(SystemMsg("s", toolsAdded: new[] { StrictPreferTool() })),
+            CreateOptions(fetch) with { MaxRetries = 3 }));
+
+        Assert.Single(fetch.Requests);
+        Assert.Equal(new[] { "start", "error" }, EventTypes(events));
+    }
+
+    [Fact]
+    public async Task OAuth_Tool_Name_Is_Mapped_Back_To_Declared_Casing()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject
+            {
+                ["type"] = "tool_use",
+                ["id"] = "toolu_1",
+                ["name"] = "get_weather",
+                ["input"] = new JsonObject(),
+            }),
+            ContentBlockStop(0),
+            MessageDelta("tool_use"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(),
+            Context(SystemMsg("s", toolsAdded: new[] { Tool("Get_Weather") })),
+            CreateOptions(fetch) with { ApiKey = "sk-ant-oat01-example" }));
+
+        // Claude Code 隐身模式：响应阶段的 tool_use 名按声明工具表还原原名（pi fromClaudeCodeName）。
+        var end = Assert.IsType<AssistantMessageEvent.ToolCallEnd>(events[^2]);
+        Assert.Equal("Get_Weather", end.ToolCall.Name);
+    }
+
+    // ------------------------------------------------------------------
+    // strict 工具 400 降级重发（只在流建立前）
+    // ------------------------------------------------------------------
+
+    private static Tool StrictPreferTool(string name = "strict_tool")
+        => Tool(name) with
+        {
+            ConstrainedSampling = new ConstrainedSampling.Config(
+                new ConstrainedSamplingConfig.JsonSchema(StrictMode.Prefer)),
+        };
+
+    [Fact]
+    public async Task Strict_Tool_400_Downgrade_Resends_Without_Strict()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+            + "\"message\":\"Too many strict tools (3), max is 2\"}}",
+            status: 400,
+            headers: new Dictionary<string, string?> { ["content-type"] = "application/json" });
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(compat: new JsonObject { ["supportsStrictTools"] = true }),
+            Context(SystemMsg("s", toolsAdded: new[] { StrictPreferTool() })),
+            CreateOptions(fetch)));
+
+        // 第一次 strict 被拒 → 关掉 prefer 工具的 strict 原样重发一次。
+        Assert.Equal(2, fetch.Requests.Count);
+        Assert.True(Body(fetch, 0)["tools"]!.AsArray()[0]!["strict"]!.GetValue<bool>());
+        Assert.Null(Body(fetch, 1)["tools"]!.AsArray()[0]!["strict"]);
+        Assert.Equal(new[] { "start", "done" }, EventTypes(events));
+
+        var diagnostic = Assert.Single(Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Message.Diagnostics!);
+        Assert.Equal("anthropic_strict_tools_fallback", diagnostic.Type);
+        Assert.Equal("strict_tool_limits_exceeded", diagnostic.Details!["reason"]!.GetValue<string>());
+        Assert.Contains("Too many strict tools", diagnostic.Error!.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Strict_400_Without_Strict_Limit_Message_Is_Terminal_Error()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad schema\"}}",
+            status: 400,
+            headers: new Dictionary<string, string?> { ["content-type"] = "application/json" });
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(compat: new JsonObject { ["supportsStrictTools"] = true }),
+            Context(SystemMsg("s", toolsAdded: new[] { StrictPreferTool() })),
+            CreateOptions(fetch) with { MaxRetries = 3 }));
+
+        // 非 strict 容量消息的 400 不降级：单请求终态 Error。
+        Assert.Single(fetch.Requests);
+        var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("bad schema", error.Message.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Provider_Thinking_Level_Is_Recorded_In_Output_Snapshot()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(compat: new JsonObject { ["supportsMidConvoEffort"] = true }),
+            Context(UserMsg("hi")),
+            CreateOptions(fetch) with { ThinkingEnabled = true, Effort = ThinkingLevel.XHigh }));
+
+        // pi stream:654：effort-message 模式生效时把 buildParams 的 providerThinkingLevel 记到回复快照，
+        // 下一回合 ConvertMessagesCore 靠它重放历史 effort 标记。
+        Assert.Equal(
+            "xhigh",
+            Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Message.ProviderThinkingLevel);
+    }
+
+    [Fact]
+    public async Task Hooks_And_Identity_Headers()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject { ["type"] = "text", ["text"] = "" }),
+            TextDelta(0, "ok"),
+            ContentBlockStop(0),
+            MessageDelta("end_turn"),
+            MessageStop()), headers: SseHeaders());
+
+        JsonObject? payloadSeen = null;
+        var responseCount = 0;
+        var providerEvents = new List<string>();
+        var options = CreateOptions(fetch, new AnthropicOptions
+        {
+            MaxTokens = 64,
+            OnPayload = (payload, _) =>
+            {
+                payloadSeen = payload?.DeepClone() as JsonObject;
+                return Task.FromResult<JsonNode?>(null);
+            },
+            OnResponse = (_, _) =>
+            {
+                Interlocked.Increment(ref responseCount);
+                return Task.CompletedTask;
+            },
+            OnProviderStreamEvent = (@event, _) =>
+            {
+                providerEvents.Add(@event["type"]!.GetValue<string>());
+                return Task.CompletedTask;
+            },
+        }) with
+        {
+            Identity = new ClientIdentity
+            {
+                UserAgent = UserAgentMode.Custom("custom-agent/1.0"),
+                Attribution = null,
+            },
+        };
+
+        var events = await CollectAsync(AnthropicMessages.Stream(CreateModel(), Context(UserMsg("hi")), options));
+
+        Assert.Equal("custom-agent/1.0", fetch.Requests[0].Headers["user-agent"]);
+        Assert.NotNull(payloadSeen);
+        Assert.True(payloadSeen!["stream"]!.GetValue<bool>());
+        Assert.Equal(1, Volatile.Read(ref responseCount));
+        // 每条原始命名 SSE 事件都透传 OnProviderStreamEvent（pi onProviderStreamEvent）。
+        Assert.Equal(
+            new[]
+            {
+                "message_start", "content_block_start", "content_block_delta",
+                "content_block_stop", "message_delta", "message_stop",
+            },
+            providerEvents);
+        Assert.Equal(
+            new[] { "start", "text_start", "text_delta", "text_end", "done" },
+            EventTypes(events));
+    }
+
+    /// <summary>自建 IFetchResponse：给协议测试一个可替换 Body 的响应替身。</summary>
+    private sealed class TestFetchResponse : IFetchResponse
+    {
+        private readonly Stream _body;
+
+        public TestFetchResponse(int statusCode, FetchHeaders headers, Stream body)
+        {
+            StatusCode = statusCode;
+            Headers = headers;
+            _body = body;
+        }
+
+        public int StatusCode { get; }
+        public FetchHeaders Headers { get; }
+        public Stream Body => _body;
+
+        public void Abort() => _body.Dispose();
+
+        public ValueTask DisposeAsync()
+        {
+            _body.Dispose();
+            return default;
+        }
+    }
+
+    /// <summary>读取时先按行回放一段固定内容、随后阻塞到取消令牌触发再抛 OCE 的流。</summary>
+    private sealed class CancelBlockingStream : Stream
+    {
+        private readonly MemoryStream _head;
+        private readonly CancellationTokenSource _cts;
+
+        public CancelBlockingStream(string head, CancellationTokenSource cts)
+        {
+            _head = new MemoryStream(Encoding.UTF8.GetBytes(head));
+            _cts = cts;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+        {
+            if (_head.Position < _head.Length)
+            {
+                return await _head.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            }
+
+            var released = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var registration = _cts.Token.Register(() => released.TrySetResult(true));
+            await released.Task.ConfigureAwait(false);
+            _cts.Token.ThrowIfCancellationRequested();
+            return 0;
+        }
+
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _head.Length;
+        public override long Position { get => _head.Position; set => throw new NotSupportedException(); }
     }
 }

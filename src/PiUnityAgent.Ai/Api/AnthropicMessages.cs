@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -39,10 +41,9 @@ internal sealed record AnthropicMessagesCompat
 /// <summary>
 /// Anthropic Messages 协议适配器（pi <c>api/anthropic-messages.ts</c> 移植）：
 /// system 独立字段、content 块协议（thinking / redacted_thinking / tool_use / tool_result / image）、
-/// beta 头、cache_control、adaptive/budget thinking、中段 system 与工具变更、OAuth Bearer。
+/// beta 头、cache_control、adaptive/budget thinking、中段 system 与工具变更、OAuth Bearer、
+/// 命名 SSE 事件状态机（message_start / content_block_* / message_delta / message_stop）。
 /// 请求走注入的 <see cref="FetchFunction"/>（REST <c>POST /v1/messages</c>）。
-/// ⚠️ S5 Task 2 边界：请求构造/转换/发送已落地，SSE 响应状态机归 Task 3——响应 2xx 后
-/// 当前置为终态 Error（"Anthropic SSE state machine pending Task 3"），请求形状可被 MockFetch 观测。
 /// </summary>
 public static class AnthropicMessages
 {
@@ -133,6 +134,7 @@ public static class AnthropicMessages
         AnthropicOptions? options,
         AnthropicMessagesCompat compat)
     {
+        var blocks = new List<StreamBlock>();
         var output = new MutableOutput(model);
         try
         {
@@ -149,18 +151,7 @@ public static class AnthropicMessages
 
             var isOAuth = IsOAuthToken(apiKey);
             var cacheRetention = ResolveCacheRetention(options?.CacheRetention, options?.Env);
-
-            JsonNode payload = BuildParamsForRequest(model, normalizedContext, isOAuth, options, compat).Params;
-            if (options?.OnPayload is { } onPayload)
-            {
-                var next = await onPayload(payload, model).ConfigureAwait(false);
-                if (next is not null)
-                {
-                    payload = next;
-                }
-
-                payload["stream"] = true;
-            }
+            var currentTools = GetCurrentTools(normalizedContext.Messages);
 
             var fetch = options?.Fetch;
             if (fetch is null)
@@ -172,46 +163,91 @@ public static class AnthropicMessages
             var signal = options?.CancellationToken ?? default;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(signal);
             var fetchOptions = BuildFetchOptions(options?.TimeoutMs);
-            var request = BuildRequest(
-                model, options, payload, apiKey, isOAuth, compat, cacheRetention);
 
-            var response = await ProviderRetry.RunAsync(
-                async requestToken =>
+            // pi stream 649–691：Anthropic 会用 400 拒绝「strict 工具集超出容量」的请求。这类拒绝
+            // 只跟 strict 有关：先按原样发一次，命中后关掉 prefer 工具的 strict 再发一次（require
+            // 不在此列）；流一旦建立绝不重发——只降级「被拒绝的请求」。
+            var disablePreferredStrictTools = false;
+            IFetchResponse response;
+            while (true)
+            {
+                signal.ThrowIfCancellationRequested();
+                var built = BuildParamsForRequest(
+                    model, normalizedContext, isOAuth, options, compat, disablePreferredStrictTools);
+                // pi anthropic-messages.ts:654：effort-message 模式的当前 effort 记到回复快照，
+                // 下一回合 ConvertMessagesCore 靠它重放历史 effort 标记。
+                output.ProviderThinkingLevel = built.ProviderThinkingLevel;
+                JsonNode payload = built.Params;
+                if (options?.OnPayload is { } onPayload)
                 {
-                    var attempt = await fetch(request, fetchOptions, requestToken).ConfigureAwait(false);
-                    if (attempt.StatusCode is < 200 or >= 300)
+                    var next = await onPayload(payload, model).ConfigureAwait(false);
+                    if (next is not null)
                     {
-                        // 非 2xx 抛携带 status/headers/body 的 FetchException（408/409/429/5xx 可重试）。
-                        string errorBody;
-                        try
-                        {
-                            errorBody = await ReadBodyAsync(attempt.Body, requestToken).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            await attempt.DisposeAsync().ConfigureAwait(false);
-                        }
-
-                        throw new FetchException(
-                            FetchErrorKind.Protocol,
-                            errorBody.Trim().Length > 0
-                                ? $"{attempt.StatusCode}: {errorBody}"
-                                : $"HTTP {attempt.StatusCode} (no body)")
-                        {
-                            StatusCode = attempt.StatusCode,
-                            Headers = attempt.Headers,
-                            ErrorBody = errorBody,
-                        };
+                        payload = next;
                     }
 
-                    return attempt;
-                },
-                new ProviderRetryOptions
+                    payload["stream"] = true;
+                }
+
+                var request = BuildRequest(
+                    model, options, payload, apiKey, isOAuth, compat, cacheRetention);
+                try
                 {
-                    MaxRetries = options?.MaxRetries ?? 0,
-                    MaxRetryDelayMs = options?.MaxRetryDelayMs ?? ProviderRetry.DefaultMaxRetryDelayMs,
-                },
-                lifetime.Token).ConfigureAwait(false);
+                    response = await ProviderRetry.RunAsync(
+                        async requestToken =>
+                        {
+                            var attempt = await fetch(request, fetchOptions, requestToken).ConfigureAwait(false);
+                            if (attempt.StatusCode is < 200 or >= 300)
+                            {
+                                // 非 2xx 抛携带 status/headers/body 的 FetchException（408/409/429/5xx 可重试）。
+                                string errorBody;
+                                try
+                                {
+                                    errorBody = await ReadBodyAsync(attempt.Body, requestToken).ConfigureAwait(false);
+                                }
+                                finally
+                                {
+                                    await attempt.DisposeAsync().ConfigureAwait(false);
+                                }
+
+                                throw new FetchException(
+                                    FetchErrorKind.Protocol,
+                                    errorBody.Trim().Length > 0
+                                        ? $"{attempt.StatusCode}: {errorBody}"
+                                        : $"HTTP {attempt.StatusCode} (no body)")
+                                {
+                                    StatusCode = attempt.StatusCode,
+                                    Headers = attempt.Headers,
+                                    ErrorBody = errorBody,
+                                };
+                            }
+
+                            return attempt;
+                        },
+                        new ProviderRetryOptions
+                        {
+                            MaxRetries = options?.MaxRetries ?? 0,
+                            MaxRetryDelayMs = options?.MaxRetryDelayMs ?? ProviderRetry.DefaultMaxRetryDelayMs,
+                        },
+                        lifetime.Token).ConfigureAwait(false);
+                    break;
+                }
+                catch (FetchException error) when (
+                    !signal.IsCancellationRequested
+                    && !disablePreferredStrictTools
+                    && built.HasPreferredStrictTools
+                    && IsStrictToolLimitRejection(error))
+                {
+                    disablePreferredStrictTools = true;
+                    output.Diagnostics.Add(new AssistantMessageDiagnostic
+                    {
+                        Type = "anthropic_strict_tools_fallback",
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Error = new DiagnosticErrorInfo { Message = StrictRejectionMessage(error) },
+                        Details = new JsonObject { ["reason"] = "strict_tool_limits_exceeded" },
+                    });
+                }
+            }
 
             await using var responseScope = response;
             if (options?.OnResponse is { } onResponse)
@@ -221,11 +257,36 @@ public static class AnthropicMessages
                     model).ConfigureAwait(false);
             }
 
-            // ⚠️ S5 Task 2 临时边界：SSE 事件状态机归 Task 3（S5 计划任务 3）。
-            // 请求已建立并可被测试观测；此处显式失败而不是假装流已消费。
-            throw new NotSupportedException(
-                "Anthropic SSE state machine pending Task 3: request was built and sent; " +
-                "stream event parsing arrives with S5 Task 3.");
+            // pi stream:693：start 在事件消费之前推。
+            stream.Push(new AssistantMessageEvent.Start(output.Snapshot(blocks)));
+
+            var inputTransformations = await ProcessAnthropicStream(
+                response.Body, output, blocks, stream, model, compat, currentTools, isOAuth,
+                options?.OnProviderStreamEvent, lifetime.Token).ConfigureAwait(false);
+
+            if (signal.IsCancellationRequested)
+            {
+                throw new OperationCanceledException("Request was aborted", signal);
+            }
+
+            if (output.StopReason == StopReason.Pending)
+            {
+                throw new InvalidOperationException("Anthropic stream ended without a stop reason");
+            }
+
+            if (output.StopReason is StopReason.Aborted or StopReason.Error)
+            {
+                throw new InvalidOperationException(output.ErrorMessage ?? "An unknown error occurred");
+            }
+
+            if (inputTransformations is { Count: > 0 })
+            {
+                output.Diagnostics.Add(BuildInputTransformationsDiagnostic(inputTransformations));
+            }
+
+            var final = output.Snapshot(blocks);
+            stream.Push(new AssistantMessageEvent.Done(output.StopReason, final));
+            stream.End(final);
         }
         catch (Exception error)
         {
@@ -236,10 +297,608 @@ public static class AnthropicMessages
             output.ErrorMessage = aborted && error is OperationCanceledException
                 ? "Request was aborted"
                 : FormatProviderError(error);
-            var failed = output.Snapshot();
+            var failed = output.Snapshot(blocks);
             stream.Push(new AssistantMessageEvent.Error(output.StopReason, failed));
             stream.End(failed);
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // SSE 状态机（pi iterateSseMessages/iterateAnthropicEvents 477–576 + stream 695–916）
+    // ---------------------------------------------------------------------
+
+    /// <summary>pi ANTHROPIC_MESSAGE_EVENTS：只有这六个命名事件的 data 才进状态机。</summary>
+    private static readonly HashSet<string> AnthropicMessageEvents = new()
+    {
+        "message_start",
+        "message_delta",
+        "message_stop",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+    };
+
+    /// <summary>pi constrained-sampling.ts 152–156：strict 容量拒绝的三条消息。</summary>
+    private static readonly string[] StrictToolLimitErrorMessages =
+    {
+        "The compiled grammar is too large",
+        "Too many strict tools (",
+        "Schemas contains too many parameters with union types (",
+    };
+
+    internal static bool IsStrictToolLimitErrorMessage(string message)
+        => StrictToolLimitErrorMessages.Any(limit => message.Contains(limit, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Anthropic 的错误体是 <c>{"type":"error","error":{"type":"invalid_request_error","message":"…"}}</c>；
+    /// 400 + invalid_request_error + strict 容量消息才降级重发（pi isStrictToolLimitRejection）。
+    /// </summary>
+    internal static bool IsStrictToolLimitRejection(FetchException error)
+    {
+        if (error.StatusCode != 400 || string.IsNullOrEmpty(error.ErrorBody))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(error.ErrorBody) is not JsonObject parsed
+                || parsed["error"] is not JsonObject inner)
+            {
+                return false;
+            }
+
+            return JsonStr(inner, "type") == "invalid_request_error"
+                && IsStrictToolLimitErrorMessage(JsonStr(inner, "message") ?? error.Message);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>诊断里的错误消息取错误体内层 message（pi SDK APIError.message 同源）；解析不出用整体消息。</summary>
+    private static string StrictRejectionMessage(FetchException error)
+    {
+        if (error.ErrorBody is { Length: > 0 } body)
+        {
+            try
+            {
+                if (JsonNode.Parse(body) is JsonObject parsed
+                    && parsed["error"] is JsonObject inner
+                    && JsonStr(inner, "message") is { Length: > 0 } message)
+                {
+                    return message;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return error.Message;
+    }
+
+    /// <summary>
+    /// 消费 Anthropic 命名 SSE 流：content_block.index → 统一 contentIndex 槽位；
+    /// thinking 签名回填；tool 参数用 <see cref="ToolCallArguments"/> 在块结束时一次解析。
+    /// 返回 message_start/message_delta 带上的 input_transformations（无则 null）。
+    /// </summary>
+    private static async Task<JsonArray?> ProcessAnthropicStream(
+        Stream body,
+        MutableOutput output,
+        List<StreamBlock> blocks,
+        AssistantMessageEventStream stream,
+        Model model,
+        AnthropicMessagesCompat compat,
+        IReadOnlyList<Tool> currentTools,
+        bool isOAuth,
+        Func<JsonNode, ProviderModel, Task>? onProviderStreamEvent,
+        CancellationToken cancellationToken)
+    {
+        var sawMessageStart = false;
+        var sawMessageStop = false;
+        var usageModel = model;
+        JsonArray? inputTransformations = null;
+        // pi openBlocks：Anthropic content_block index → 统一 contentIndex 槽位；
+        // 流状态（tool call 参数累积器等）留在槽上，永不进入 partial。
+        var openBlocks = new Dictionary<int, AnthropicBlockSlot>();
+
+        await foreach (var sse in SseEventReader.ReadAsync(body, cancellationToken).ConfigureAwait(false))
+        {
+            if (sse.Event == "error")
+            {
+                // 命名 error 事件 = 服务端中途故障，直接抛给统一 catch（pi iterateAnthropicEvents）。
+                throw new InvalidOperationException(sse.Data);
+            }
+
+            if (sse.Event is null || !AnthropicMessageEvents.Contains(sse.Event))
+            {
+                // ping / 未知命名事件照 pi 静默跳过。
+                continue;
+            }
+
+            if (JsonNode.Parse(sse.Data) is not JsonObject @event)
+            {
+                throw new InvalidOperationException(
+                    $"Could not parse Anthropic SSE event {sse.Event}: data is not a JSON object; data={sse.Data}");
+            }
+
+            if (onProviderStreamEvent is { } observer)
+            {
+                await observer(@event, model).ConfigureAwait(false);
+            }
+
+            switch (JsonStr(@event, "type"))
+            {
+                case "message_start":
+                {
+                    sawMessageStart = true;
+                    var message = JsonObj(@event, "message");
+                    output.ResponseId = JsonStr(message, "id");
+                    if (message?["input_transformations"] is JsonArray transformations)
+                    {
+                        inputTransformations = (JsonArray)transformations.DeepClone();
+                    }
+
+                    var responseModel = JsonStr(message, "model");
+                    if (responseModel is not null && responseModel != model.Id)
+                    {
+                        // 服务端 fallback 模型接手：计价改用 compat.allowedFallbackModels 里该模型的 cost。
+                        output.ResponseModel = responseModel;
+                        usageModel = model;
+                        foreach (var fallback in compat.AllowedFallbackModels ?? new JsonArray())
+                        {
+                            if (fallback is not JsonObject entry
+                                || JsonStr(entry, "provider") != model.Provider
+                                || JsonStr(entry, "model") != responseModel
+                                || entry["cost"] is not JsonObject cost)
+                            {
+                                continue;
+                            }
+
+                            usageModel = model with
+                            {
+                                Id = responseModel,
+                                Cost = new ModelCost(
+                                    JsonNum(cost, "input") ?? 0,
+                                    JsonNum(cost, "output") ?? 0,
+                                    JsonNum(cost, "cacheRead") ?? 0,
+                                    JsonNum(cost, "cacheWrite") ?? 0),
+                            };
+                            break;
+                        }
+                    }
+
+                    // message_start 就记初值：流早停（中止/截断）时 input/cache 计数仍可用。
+                    if (JsonObj(message, "usage") is { } usage)
+                    {
+                        var cacheCreation = JsonObj(usage, "cache_creation");
+                        var input = (int)(JsonNum(usage, "input_tokens") ?? 0);
+                        var outputTokens = (int)(JsonNum(usage, "output_tokens") ?? 0);
+                        var cacheRead = (int)(JsonNum(usage, "cache_read_input_tokens") ?? 0);
+                        var cacheWrite = (int)(JsonNum(usage, "cache_creation_input_tokens") ?? 0);
+                        output.Usage = new Usage
+                        {
+                            Input = input,
+                            Output = outputTokens,
+                            CacheRead = cacheRead,
+                            CacheWrite = cacheWrite,
+                            CacheWrite1h = (int)(JsonNum(cacheCreation, "ephemeral_1h_input_tokens") ?? 0),
+                            TotalTokens = input + outputTokens + cacheRead + cacheWrite,
+                        };
+                        output.Usage = output.Usage with
+                        {
+                            Cost = ModelOperations.CalculateCost(usageModel, output.Usage),
+                        };
+                    }
+
+                    break;
+                }
+
+                case "content_block_start":
+                {
+                    var wireIndex = ReadIndex(@event);
+                    if (JsonObj(@event, "content_block") is not { } contentBlock
+                        || JsonStr(contentBlock, "type") is not { } blockType)
+                    {
+                        break;
+                    }
+
+                    if (blockType == "fallback")
+                    {
+                        if (blocks.Count > 0)
+                        {
+                            throw new InvalidOperationException(
+                                "Anthropic performed an unsupported mid-output model fallback");
+                        }
+
+                        break;
+                    }
+
+                    switch (blockType)
+                    {
+                        case "text":
+                        {
+                            var textBlock = new TextStreamBlock { Text = JsonStr(contentBlock, "text") ?? "" };
+                            blocks.Add(textBlock);
+                            openBlocks[wireIndex] = new AnthropicBlockSlot
+                            {
+                                ContentIndex = blocks.Count - 1,
+                                Text = textBlock,
+                            };
+                            stream.Push(new AssistantMessageEvent.TextStart(
+                                blocks.Count - 1, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "thinking":
+                        {
+                            var thinkingBlock = new ThinkingStreamBlock
+                            {
+                                Thinking = JsonStr(contentBlock, "thinking") ?? "",
+                                ThinkingSignature = JsonStr(contentBlock, "signature") ?? "",
+                            };
+                            blocks.Add(thinkingBlock);
+                            openBlocks[wireIndex] = new AnthropicBlockSlot
+                            {
+                                ContentIndex = blocks.Count - 1,
+                                Thinking = thinkingBlock,
+                            };
+                            stream.Push(new AssistantMessageEvent.ThinkingStart(
+                                blocks.Count - 1, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "redacted_thinking":
+                        {
+                            var redactedBlock = new ThinkingStreamBlock
+                            {
+                                Thinking = "[Reasoning redacted]",
+                                ThinkingSignature = JsonStr(contentBlock, "data") ?? "",
+                                Redacted = true,
+                            };
+                            blocks.Add(redactedBlock);
+                            openBlocks[wireIndex] = new AnthropicBlockSlot
+                            {
+                                ContentIndex = blocks.Count - 1,
+                                Thinking = redactedBlock,
+                            };
+                            stream.Push(new AssistantMessageEvent.ThinkingStart(
+                                blocks.Count - 1, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "tool_use":
+                        {
+                            var name = JsonStr(contentBlock, "name") ?? "";
+                            var toolBlock = new ToolCallStreamBlock
+                            {
+                                Id = JsonStr(contentBlock, "id") ?? "",
+                                Name = isOAuth ? FromClaudeCodeName(name, currentTools) : name,
+                                Arguments = contentBlock["input"] as JsonObject is { } input
+                                    ? (JsonObject)input.DeepClone()
+                                    : new JsonObject(),
+                            };
+                            blocks.Add(toolBlock);
+                            openBlocks[wireIndex] = new AnthropicBlockSlot
+                            {
+                                ContentIndex = blocks.Count - 1,
+                                ToolCall = toolBlock,
+                                JsonArguments = new ToolCallArguments(),
+                            };
+                            stream.Push(new AssistantMessageEvent.ToolCallStart(
+                                blocks.Count - 1, output.Snapshot(blocks)));
+                            break;
+                        }
+                    }
+
+                    break;
+                }
+
+                case "content_block_delta":
+                {
+                    var wireIndex = ReadIndex(@event);
+                    if (!openBlocks.TryGetValue(wireIndex, out var slot))
+                    {
+                        break;
+                    }
+
+                    var delta = JsonObj(@event, "delta");
+                    switch (JsonStr(delta, "type"))
+                    {
+                        case "text_delta" when slot.Text is not null:
+                        {
+                            var text = JsonStr(delta, "text") ?? "";
+                            slot.Text.Text += text;
+                            stream.Push(new AssistantMessageEvent.TextDelta(
+                                slot.ContentIndex, text, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "thinking_delta" when slot.Thinking is not null:
+                        {
+                            var thinking = JsonStr(delta, "thinking") ?? "";
+                            slot.Thinking.Thinking += thinking;
+                            stream.Push(new AssistantMessageEvent.ThinkingDelta(
+                                slot.ContentIndex, thinking, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "input_json_delta" when slot.ToolCall is not null && slot.JsonArguments is not null:
+                        {
+                            var jsonDelta = JsonStr(delta, "partial_json") ?? "";
+                            slot.JsonArguments.Append(jsonDelta);
+                            stream.Push(new AssistantMessageEvent.ToolCallDelta(
+                                slot.ContentIndex, jsonDelta, output.Snapshot(blocks)));
+                            break;
+                        }
+
+                        case "signature_delta" when slot.Thinking is not null:
+                        {
+                            // pi 不为签名回填推流事件；只回填块上的 thinkingSignature。
+                            slot.Thinking.ThinkingSignature += JsonStr(delta, "signature") ?? "";
+                            break;
+                        }
+                    }
+
+                    break;
+                }
+
+                case "content_block_stop":
+                {
+                    var wireIndex = ReadIndex(@event);
+                    if (!openBlocks.Remove(wireIndex, out var slot))
+                    {
+                        break;
+                    }
+
+                    if (slot.Text is not null)
+                    {
+                        stream.Push(new AssistantMessageEvent.TextEnd(
+                            slot.ContentIndex, slot.Text.Text, output.Snapshot(blocks)));
+                    }
+                    else if (slot.Thinking is not null)
+                    {
+                        stream.Push(new AssistantMessageEvent.ThinkingEnd(
+                            slot.ContentIndex, slot.Thinking.Thinking, output.Snapshot(blocks)));
+                    }
+                    else if (slot.ToolCall is not null && slot.JsonArguments is not null)
+                    {
+                        var block = slot.ToolCall;
+                        try
+                        {
+                            block.Arguments = slot.JsonArguments.Finish();
+                        }
+                        catch (JsonException argumentsError)
+                        {
+                            // pi parseToolCallArguments：非法参数 JSON 不失败流，落 argumentsError。
+                            block.Arguments = new JsonObject();
+                            block.ArgumentsError =
+                                $"{argumentsError.Message}\n\nReceived arguments:\n{slot.JsonArguments.Text}";
+                        }
+
+                        stream.Push(new AssistantMessageEvent.ToolCallEnd(
+                            slot.ContentIndex, block.ToToolCall(), output.Snapshot(blocks)));
+                    }
+
+                    break;
+                }
+
+                case "message_delta":
+                {
+                    if (@event["input_transformations"] is JsonArray deltaTransformations)
+                    {
+                        inputTransformations = (JsonArray)deltaTransformations.DeepClone();
+                    }
+
+                    var delta = JsonObj(@event, "delta");
+                    if (JsonStr(delta, "stop_reason") is { } rawStopReason)
+                    {
+                        output.RawStopReason = rawStopReason;
+                        var (mapped, errorMessage) = MapStopReason(
+                            rawStopReason, JsonStr(JsonObj(delta, "stop_details"), "explanation"));
+                        output.StopReason = mapped;
+                        if (errorMessage is not null)
+                        {
+                            output.ErrorMessage = errorMessage;
+                        }
+                    }
+
+                    if (JsonObj(@event, "usage") is { } usage)
+                    {
+                        // 只更新带上来的字段：代理可能在 message_delta 省略 input/cache，message_start 的值站住。
+                        var current = output.Usage;
+                        var input = current.Input;
+                        var outputTokens = current.Output;
+                        var cacheRead = current.CacheRead;
+                        var cacheWrite = current.CacheWrite;
+                        var cacheWrite1h = current.CacheWrite1h;
+                        var reasoning = current.Reasoning;
+                        if (usage["input_tokens"] is not null)
+                        {
+                            input = (int)(JsonNum(usage, "input_tokens") ?? 0);
+                        }
+
+                        if (usage["output_tokens"] is not null)
+                        {
+                            outputTokens = (int)(JsonNum(usage, "output_tokens") ?? 0);
+                        }
+
+                        if (usage["cache_read_input_tokens"] is not null)
+                        {
+                            cacheRead = (int)(JsonNum(usage, "cache_read_input_tokens") ?? 0);
+                        }
+
+                        if (usage["cache_creation_input_tokens"] is not null)
+                        {
+                            cacheWrite = (int)(JsonNum(usage, "cache_creation_input_tokens") ?? 0);
+                        }
+
+                        // Vercel AI Gateway 等会把 TTL 细分放进 delta usage（SDK 类型只在 message_start 有）。
+                        var cacheCreation = JsonObj(usage, "cache_creation");
+                        if (cacheCreation?["ephemeral_1h_input_tokens"] is not null)
+                        {
+                            cacheWrite1h = (int)(JsonNum(cacheCreation, "ephemeral_1h_input_tokens") ?? 0);
+                        }
+
+                        // Anthropic 把 reasoning tokens 报成 output 的子集。
+                        var thinkingTokens = JsonNum(JsonObj(usage, "output_tokens_details"), "thinking_tokens");
+                        if (thinkingTokens is not null)
+                        {
+                            reasoning = (int)thinkingTokens;
+                        }
+
+                        output.Usage = new Usage
+                        {
+                            Input = input,
+                            Output = outputTokens,
+                            CacheRead = cacheRead,
+                            CacheWrite = cacheWrite,
+                            CacheWrite1h = cacheWrite1h,
+                            Reasoning = reasoning,
+                        };
+                    }
+
+                    // Anthropic 不报 total_tokens，按分量合计；随后按（可能切换过的）计价模型算成本。
+                    output.Usage = output.Usage with
+                    {
+                        TotalTokens = output.Usage.Input + output.Usage.Output
+                            + output.Usage.CacheRead + output.Usage.CacheWrite,
+                    };
+                    output.Usage = output.Usage with
+                    {
+                        Cost = ModelOperations.CalculateCost(usageModel, output.Usage),
+                    };
+                    break;
+                }
+
+                case "message_stop":
+                    sawMessageStop = true;
+                    break;
+            }
+        }
+
+        if (sawMessageStart && !sawMessageStop)
+        {
+            throw new InvalidOperationException("Anthropic stream ended before message_stop");
+        }
+
+        return inputTransformations;
+    }
+
+    /// <summary>Anthropic content_block index（缺省 -1：没有槽位命中，delta 被忽略）。</summary>
+    private static int ReadIndex(JsonObject @event)
+        => JsonNum(@event, "index") is { } index ? (int)index : -1;
+
+    /// <summary>OAuth 隐身模式：响应阶段的 tool_use 名按声明工具表还原原名（pi fromClaudeCodeName）。</summary>
+    private static string FromClaudeCodeName(string name, IReadOnlyList<Tool> tools)
+    {
+        if (tools.Count > 0)
+        {
+            var matched = tools.FirstOrDefault(tool =>
+                string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (matched is not null)
+            {
+                return matched.Name;
+            }
+        }
+
+        return name;
+    }
+
+    private static AssistantMessageDiagnostic BuildInputTransformationsDiagnostic(JsonArray transformations)
+    {
+        var items = new JsonArray();
+        foreach (var transformation in transformations)
+        {
+            if (transformation is not JsonObject entry)
+            {
+                continue;
+            }
+
+            var item = new JsonObject();
+            if (JsonStr(entry, "type") is { } type) item["type"] = type;
+            if (JsonStr(entry, "path") is { } path) item["path"] = path;
+            if (JsonStr(entry, "reason") is { } reason) item["reason"] = reason;
+            items.Add(item);
+        }
+
+        return new AssistantMessageDiagnostic
+        {
+            Type = "anthropic_input_transformations",
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Details = new JsonObject { ["transformations"] = items },
+        };
+    }
+
+    // ---------------------------------------------------------------------
+    // 流内块模型（pi openBlocks 槽位载荷 = text | thinking | toolCall）
+    // ---------------------------------------------------------------------
+
+    private abstract class StreamBlock
+    {
+        public abstract ContentBlock ToContentBlock();
+    }
+
+    private sealed class TextStreamBlock : StreamBlock
+    {
+        public string Text { get; set; } = "";
+
+        public override ContentBlock ToContentBlock() => new TextContent { Text = Text };
+    }
+
+    private sealed class ThinkingStreamBlock : StreamBlock
+    {
+        public string Thinking { get; set; } = "";
+        public string ThinkingSignature { get; set; } = "";
+        public bool Redacted { get; set; }
+
+        public override ContentBlock ToContentBlock()
+            => new ThinkingContent
+            {
+                Thinking = Thinking,
+                ThinkingSignature = ThinkingSignature.Length > 0 ? ThinkingSignature : null,
+                Redacted = Redacted ? true : null,
+            };
+    }
+
+    private sealed class ToolCallStreamBlock : StreamBlock
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public JsonObject Arguments { get; set; } = new();
+        public string? ArgumentsError { get; set; }
+
+        public override ContentBlock ToContentBlock()
+            => new ToolCall
+            {
+                Id = Id,
+                Name = Name,
+                Arguments = Arguments,
+                ArgumentsError = ArgumentsError,
+            };
+
+        public ToolCall ToToolCall()
+            => new()
+            {
+                Id = Id,
+                Name = Name,
+                Arguments = Arguments,
+                ArgumentsError = ArgumentsError,
+            };
+    }
+
+    /// <summary>pi openBlocks 槽位：Anthropic content_block index → 统一 contentIndex + 块载荷 + 流状态。</summary>
+    private sealed class AnthropicBlockSlot
+    {
+        public int ContentIndex { get; init; }
+        public TextStreamBlock? Text { get; init; }
+        public ThinkingStreamBlock? Thinking { get; init; }
+        public ToolCallStreamBlock? ToolCall { get; init; }
+
+        /// <summary>tool_use 的 JSON 参数累积器（input_json_delta）。</summary>
+        public ToolCallArguments? JsonArguments { get; init; }
     }
 
     // ---------------------------------------------------------------------
@@ -2330,7 +2989,7 @@ public static class AnthropicMessages
     }
 
     // ---------------------------------------------------------------------
-    // 流外可变输出（Task 2 只产终态 Error；Task 3 复用）
+    // 流外可变输出（pi.net MutableAssistantMessage 等价；S3 AssistantMessage 是 record）
     // ---------------------------------------------------------------------
 
     private sealed class MutableOutput
@@ -2347,26 +3006,32 @@ public static class AnthropicMessages
         public string Api { get; }
         public string Provider { get; }
         public long Timestamp { get; }
+
+        /// <summary>effort-message 模式的当前 effort（pi assistant.providerThinkingLevel）。</summary>
+        public string? ProviderThinkingLevel { get; set; }
         public string? ResponseId { get; set; }
         public string? ResponseModel { get; set; }
         public string? RawStopReason { get; set; }
         public string? ErrorMessage { get; set; }
         public StopReason StopReason { get; set; } = StopReason.Pending;
         public Usage Usage { get; set; } = new();
+        public List<AssistantMessageDiagnostic> Diagnostics { get; } = new();
 
-        public AssistantMessage Snapshot()
+        public AssistantMessage Snapshot(IReadOnlyList<StreamBlock> blocks)
             => new()
             {
-                Content = Array.Empty<ContentBlock>(),
+                Content = blocks.Select(block => block.ToContentBlock()).ToList(),
                 Api = Api,
                 Provider = Provider,
                 Model = ModelId,
+                ProviderThinkingLevel = ProviderThinkingLevel,
                 Usage = Usage,
                 StopReason = StopReason,
                 ErrorMessage = ErrorMessage,
                 RawStopReason = RawStopReason,
                 ResponseId = ResponseId,
                 ResponseModel = ResponseModel,
+                Diagnostics = Diagnostics.Count > 0 ? Diagnostics.ToList() : null,
                 Timestamp = Timestamp,
             };
     }
@@ -2382,4 +3047,15 @@ public static class AnthropicMessages
             && primitive.TryGetValue<string>(out var text)
                 ? text
                 : null;
+
+    private static double? JsonNum(JsonObject? obj, string key)
+        => obj is not null
+            && obj.TryGetPropertyValue(key, out var value)
+            && value is JsonValue primitive
+            && primitive.TryGetValue<double>(out var number)
+                ? number
+                : null;
+
+    private static JsonObject? JsonObj(JsonObject? obj, string key)
+        => obj is not null && obj.TryGetPropertyValue(key, out var value) ? value as JsonObject : null;
 }
