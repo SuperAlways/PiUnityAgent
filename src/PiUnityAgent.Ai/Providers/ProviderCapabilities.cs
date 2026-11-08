@@ -6,11 +6,18 @@ using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Providers;
 
-/// <summary>动态目录刷新 + 凭据相关模型过滤；不用默认接口方法。</summary>
+/// <summary>动态目录刷新；不用默认接口方法。</summary>
 public interface IRefreshableProvider
 {
     Task RefreshModelsAsync(RefreshModelsContext context);
-    IReadOnlyList<ProviderModel> FilterModels(
+}
+
+/// <summary>凭据相关的模型过滤；FilterAllModels 返回 null 时走 Models 的保序 fallback。</summary>
+public interface IFilterableProvider
+{
+    IReadOnlyList<Model> FilterModels(IReadOnlyList<Model> models, Credential? credential);
+
+    IReadOnlyList<ProviderModel>? FilterAllModels(
         IReadOnlyList<ProviderModel> models,
         Credential? credential);
 }
@@ -40,7 +47,7 @@ public interface IImagesProvider
     Task<AssistantImages> GenerateImagesAsync(
         ImageModel model,
         ImagesContext context,
-        StreamOptions? options);
+        ImagesOptions? options);
 }
 
 /// <summary>结构化分类能力；行为后置 2B/D5。</summary>
@@ -49,5 +56,5 @@ public interface IClassifierProvider
     Task<ClassifierResult> ClassifyAsync(
         ClassifierModel model,
         ClassifierContext context,
-        StreamOptions? options);
+        ClassifierOptions? options);
 }

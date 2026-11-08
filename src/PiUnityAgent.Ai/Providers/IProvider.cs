@@ -12,7 +12,7 @@ public interface IProvider
     string Name { get; }
     string? BaseUrl { get; }
     IReadOnlyDictionary<string, string?>? Headers { get; }
-    ProviderAuth? Auth { get; }
+    ProviderAuth Auth { get; }
 
     IReadOnlyList<Model> GetModels();
     IReadOnlyList<ProviderModel> GetAllModels();

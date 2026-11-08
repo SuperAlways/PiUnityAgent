@@ -79,4 +79,22 @@ public class StaticProviderTests
         Assert.Equal("1", provider.Headers!["x-provider"]);
         Assert.Same(auth, provider.Auth);
     }
+
+    [Fact]
+    public void Null_Auth_Is_Rejected()
+    {
+        var models = new[] { ProviderTestSupport.CreateModel() };
+
+        Assert.Throws<ArgumentNullException>(() => new StaticProvider(
+            "p1", "p1", models, ProviderTestSupport.DoneStream, null!));
+    }
+
+    [Fact]
+    public void Auth_Without_ApiKey_Or_OAuth_Is_Rejected()
+    {
+        var models = new[] { ProviderTestSupport.CreateModel() };
+
+        Assert.Throws<ArgumentException>(() => new StaticProvider(
+            "p1", "p1", models, ProviderTestSupport.DoneStream, new ProviderAuth()));
+    }
 }

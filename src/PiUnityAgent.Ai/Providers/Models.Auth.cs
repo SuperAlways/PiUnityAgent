@@ -84,12 +84,9 @@ public sealed partial class Models
             var credential = await ReadCredentialAsync(
                 entry.Id, options?.CancellationToken ?? default).ConfigureAwait(false);
             var models = SafeChatModels(entry);
-            if (entry is IRefreshableProvider refreshable)
+            if (entry is IFilterableProvider filterable)
             {
-                models = refreshable.FilterModels(
-                    models.Cast<ProviderModel>().ToList(), credential)
-                    .OfType<Model>()
-                    .ToList();
+                models = filterable.FilterModels(models, credential);
             }
             result.AddRange(models);
         }
@@ -132,10 +129,18 @@ public sealed partial class Models
         var credential = await ReadCredentialAsync(
             entry.Id, options?.CancellationToken ?? default).ConfigureAwait(false);
         var all = SafeAllModels(entry);
-        // Task 1 仍用旧 IRefreshableProvider.FilterModels；Task 3 切换 IFilterableProvider/FilterAllModels。
-        return entry is IRefreshableProvider refreshable
-            ? refreshable.FilterModels(all, credential)
-            : all;
+        if (entry is not IFilterableProvider filterable) return all;
+
+        var filteredAll = filterable.FilterAllModels(all, credential);
+        if (filteredAll is not null) return filteredAll;
+
+        // pi fallback：保持原顺序，只剔除不可用 chat；其他类别原样保留。
+        var availableChatIds = filterable.FilterModels(SafeChatModels(entry), credential)
+            .Select(model => model.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        return all
+            .Where(model => model.Type != ModelType.Chat || availableChatIds.Contains(model.Id))
+            .ToList();
     }
 
     public Task<ModelsRefreshResult> RefreshAsync(ModelsRefreshOptions? options = null)

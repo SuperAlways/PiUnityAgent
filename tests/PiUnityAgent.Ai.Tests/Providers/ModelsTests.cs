@@ -225,4 +225,95 @@ public class ModelsTests
 
         Assert.Equal(StopReason.Stop, message.StopReason);
     }
+
+    [Fact]
+    public async Task GetAvailableAll_Fallback_Preserves_Order_And_Filters_Chat_Only()
+    {
+        var models = new Models();
+        models.SetProvider(new FilterableProvider(
+            new ProviderModel[]
+            {
+                ProviderTestSupport.CreateModel("chatA"),
+                new ImageModel
+                {
+                    Id = "img1", Name = "img1", Api = "faux", Provider = "p1",
+                    BaseUrl = "http://localhost:0",
+                },
+                ProviderTestSupport.CreateModel("chatB"),
+                new ClassifierModel
+                {
+                    Id = "cls1", Name = "cls1", Api = "faux", Provider = "p1",
+                    BaseUrl = "http://localhost:0",
+                },
+            },
+            keptChatIds: new[] { "chatB" },
+            filteredAll: null));
+
+        var available = await models.GetAllAvailableAsync("p1");
+
+        // 原顺序保留：chatA 被剔除，非 chat 类别原样保留。
+        Assert.Equal(new[] { "img1", "chatB", "cls1" },
+            available.Select(model => model.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task GetAvailableAll_FilterAllModels_Result_Wins_When_Not_Null()
+    {
+        var models = new Models();
+        var winner = new ProviderModel[] { ProviderTestSupport.CreateModel("only") };
+        models.SetProvider(new FilterableProvider(
+            new ProviderModel[] { ProviderTestSupport.CreateModel("chatA") },
+            keptChatIds: Array.Empty<string>(),
+            filteredAll: winner));
+
+        var available = await models.GetAllAvailableAsync("p1");
+
+        // fallback 会把 chatA 剔成空；非 null 的 FilterAllModels 结果必须整体胜出。
+        Assert.Equal(new[] { "only" }, available.Select(model => model.Id).ToArray());
+    }
+
+    /// <summary>Step 7 fallback 行为的测试载体：可过滤 provider，auth 走 keyless。</summary>
+    private sealed class FilterableProvider : IProvider, IFilterableProvider
+    {
+        private readonly IReadOnlyList<ProviderModel> _all;
+        private readonly IReadOnlySet<string> _keptChatIds;
+        private readonly IReadOnlyList<ProviderModel>? _filteredAll;
+
+        public FilterableProvider(
+            IReadOnlyList<ProviderModel> all,
+            IReadOnlyList<string> keptChatIds,
+            IReadOnlyList<ProviderModel>? filteredAll)
+        {
+            _all = all;
+            _keptChatIds = new HashSet<string>(keptChatIds, StringComparer.Ordinal);
+            _filteredAll = filteredAll;
+            Auth = ProviderTestSupport.KeylessAuth();
+        }
+
+        public string Id => "p1";
+        public string Name => "p1";
+        public string? BaseUrl => null;
+        public IReadOnlyDictionary<string, string?>? Headers => null;
+        public ProviderAuth Auth { get; }
+
+        public IReadOnlyList<Model> GetModels()
+            => _all.OfType<Model>().Where(model => _keptChatIds.Contains(model.Id)).ToList();
+
+        public IReadOnlyList<ProviderModel> GetAllModels() => _all;
+
+        public IReadOnlyList<Model> FilterModels(IReadOnlyList<Model> models, Credential? credential)
+            => models.Where(model => _keptChatIds.Contains(model.Id)).ToList();
+
+        public IReadOnlyList<ProviderModel>? FilterAllModels(
+            IReadOnlyList<ProviderModel> models, Credential? credential)
+            => _filteredAll;
+
+        public IAssistantMessageEventStream Stream(
+            Model model, TranscriptContext context, StreamOptions? options)
+            => throw new NotSupportedException("Not used in this test.");
+
+        public IAssistantMessageEventStream StreamSimple(
+            Model model, TranscriptContext context, SimpleStreamOptions? options)
+            => throw new NotSupportedException("Not used in this test.");
+    }
 }

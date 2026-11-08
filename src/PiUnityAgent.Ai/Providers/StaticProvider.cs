@@ -16,24 +16,26 @@ public sealed class StaticProvider : IProvider
         string name,
         IReadOnlyList<Model> models,
         StreamFn stream,
+        ProviderAuth auth,
         string? baseUrl = null,
-        IReadOnlyDictionary<string, string?>? headers = null,
-        ProviderAuth? auth = null)
+        IReadOnlyDictionary<string, string?>? headers = null)
     {
         Id = id;
         Name = name;
         _models = models ?? throw new ArgumentNullException(nameof(models));
         _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+        Auth = auth ?? throw new ArgumentNullException(nameof(auth));
+        if (Auth.ApiKey is null && Auth.OAuth is null)
+            throw new ArgumentException("ProviderAuth requires ApiKey or OAuth.", nameof(auth));
         BaseUrl = baseUrl;
         Headers = headers;
-        Auth = auth;
     }
 
     public string Id { get; }
     public string Name { get; }
     public string? BaseUrl { get; }
     public IReadOnlyDictionary<string, string?>? Headers { get; }
-    public ProviderAuth? Auth { get; }
+    public ProviderAuth Auth { get; }
 
     public IReadOnlyList<Model> GetModels() => _models;
 

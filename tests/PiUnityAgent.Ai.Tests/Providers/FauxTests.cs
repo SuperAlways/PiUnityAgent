@@ -52,8 +52,8 @@ public class FauxTests
         var faux = new FauxProvider();
         var auth = faux.Provider.Auth;
 
-        Assert.NotNull(auth?.ApiKey);
-        var resolved = await auth!.ApiKey!.Resolve(
+        Assert.NotNull(auth.ApiKey);
+        var resolved = await auth.ApiKey!.Resolve(
             new ApiKeyResolveInput(new DefaultAuthContext(), null), default);
 
         Assert.NotNull(resolved);

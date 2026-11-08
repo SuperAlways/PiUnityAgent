@@ -50,9 +50,9 @@ internal static class ProviderTestSupport
             id,
             models ?? new[] { CreateModel("m1", id) },
             stream ?? DoneStream,
+            auth ?? KeylessAuth(),
             baseUrl ?? "http://localhost:0",
-            headers,
-            auth ?? KeylessAuth());
+            headers);
 
     /// <summary>Keyless 默认认证：无凭据也能通过（对齐 pi faux/测试 provider 恒带 auth 的约定）。</summary>
     public static ProviderAuth KeylessAuth()
@@ -60,9 +60,9 @@ internal static class ProviderTestSupport
         {
             ApiKey = new ApiKeyAuth
             {
-                Name = "test",
+                Name = "keyless",
                 Resolve = (_, _) => Task.FromResult<AuthResult?>(
-                    new AuthResult(new ModelAuth(), null, "test")),
+                    new AuthResult(new ModelAuth(), null, "keyless")),
             },
         };
 

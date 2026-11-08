@@ -31,14 +31,14 @@ public sealed partial class Models
     public Task<AssistantImages> GenerateImagesAsync(
         ImageModel model,
         ImagesContext context,
-        StreamOptions? options = null)
+        ImagesOptions? options = null)
         => throw new NotSupportedException(
             "Deferred to 2B: image generation (D4)");
 
     public Task<ClassifierResult> ClassifyAsync(
         ClassifierModel model,
         ClassifierContext context,
-        StreamOptions? options = null)
+        ClassifierOptions? options = null)
         => throw new NotSupportedException(
             "Deferred to 2B: classification (D5)");
 }

@@ -229,6 +229,15 @@ public class ModelsAuthTests
     }
 
     [Fact]
+    public async Task Keyless_Auth_Provider_Is_Available()
+    {
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider());
+        Assert.True((await models.CheckAuthAsync("p1"))!.Type is AuthType.ApiKey);
+        Assert.Single(await models.GetAvailableAsync());
+    }
+
+    [Fact]
     public async Task Logout_Deletes_Store_Credential()
     {
         var store = new InMemoryCredentialStore();
