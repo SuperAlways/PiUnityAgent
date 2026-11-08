@@ -30,10 +30,13 @@ public static class ProviderFactory
             throw new ModelsError(ModelsErrorCode.Provider,
                 $"Provider {options.Id}: at least one of Api/ApiByApi/Images/Classifiers is required.");
 
-        return new CreatedProvider(options, options.Api, options.ApiByApi);
+        // D2：FetchModels 在手才可刷新——工厂产物只有它实现 IRefreshableProvider（对齐 pi createProvider models.ts:1129）。
+        return options.FetchModels is not null
+            ? new RefreshableCreatedProvider(options, options.Api, options.ApiByApi)
+            : new CreatedProvider(options, options.Api, options.ApiByApi);
     }
 
-    private sealed class CreatedProvider : IProvider, IFilterableProvider, IImagesProvider, IClassifierProvider
+    private class CreatedProvider : IProvider, IFilterableProvider, IImagesProvider, IClassifierProvider
     {
         private readonly CreateProviderOptions _options;
         private readonly ProviderStreams? _single;
@@ -55,8 +58,8 @@ public static class ProviderFactory
         public IReadOnlyDictionary<string, string?>? Headers => _options.Headers;
         public ProviderAuth Auth => _options.Auth;
 
-        public IReadOnlyList<Model> GetModels() => _options.Models.OfType<Model>().ToList();
-        public IReadOnlyList<ProviderModel> GetAllModels() => _options.Models;
+        public virtual IReadOnlyList<Model> GetModels() => _options.Models.OfType<Model>().ToList();
+        public virtual IReadOnlyList<ProviderModel> GetAllModels() => _options.Models;
 
         public IReadOnlyList<Model> FilterModels(IReadOnlyList<Model> models, Credential? credential)
             => _options.FilterModels?.Invoke(models, credential) ?? models;
@@ -98,5 +101,96 @@ public static class ProviderFactory
             => _options.Classifiers is not null && _options.Classifiers.TryGetValue(model.Api, out var implementation)
                 ? implementation.Classify(model, context, options)
                 : throw new NotSupportedException("Deferred to 2B: classification (D5)");
+    }
+
+    /// <summary>
+    /// D2：带 FetchModels 的工厂产物——动态目录可刷新。
+    /// GetAllModels = 静态基线 ∪ 动态覆盖（同 type+id 就地替换，否则追加，pi models.ts:1093-1103）；
+    /// GetModels = 覆盖后的 chat。refreshModels 包装对齐 pi models.ts:1129-1160。
+    /// </summary>
+    private sealed class RefreshableCreatedProvider : CreatedProvider, IRefreshableProvider
+    {
+        private readonly CreateProviderOptions _options;
+        private readonly object _gate = new();
+        private IReadOnlyList<ProviderModel> _dynamic = Array.Empty<ProviderModel>();
+
+        public RefreshableCreatedProvider(
+            CreateProviderOptions options,
+            ProviderStreams? single,
+            IReadOnlyDictionary<string, ProviderStreams>? byApi)
+            : base(options, single, byApi)
+        {
+            _options = options;
+        }
+
+        public override IReadOnlyList<Model> GetModels() => Overlay().OfType<Model>().ToList();
+
+        public override IReadOnlyList<ProviderModel> GetAllModels() => Overlay();
+
+        public async Task RefreshModelsAsync(RefreshModelsContext context)
+        {
+            // a. 恢复存储的动态目录：只取本 provider 的条目（pi models.ts:1132-1135）。
+            if (context.Stored is not null)
+            {
+                var restored = context.Stored.Models
+                    .Where(model => string.Equals(model.Provider, _options.Id, StringComparison.Ordinal))
+                    .ToList();
+                if (!await context.Publish(new ModelsPublication
+                    {
+                        Update = () => SetDynamic(restored),
+                    }).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+
+            // b. 网络阶段双闸：AllowNetwork + 取消（pi models.ts:1140）。
+            if (!context.AllowNetwork || context.CancellationToken.IsCancellationRequested) return;
+
+            // c. 拉取 → 滤掉未知类型 → 持久化 + 点亮（pi models.ts:1141-1159）。
+            //    FetchModels 抛错不打原地捕获：向上传给 Models.RefreshAsync 按 provider 收集，旧表保留。
+            var fetched = await _options.FetchModels!(context).ConfigureAwait(false);
+            if (context.CancellationToken.IsCancellationRequested) return;
+            var refreshed = fetched.Where(HasKnownModelType).ToList();
+            if (!await context.Publish(new ModelsPublication
+                {
+                    Persist = new ModelsStoreEntry
+                    {
+                        Models = refreshed,
+                        CheckedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    },
+                    Update = () => SetDynamic(refreshed),
+                }).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+
+        private IReadOnlyList<ProviderModel> Overlay()
+        {
+            lock (_gate)
+            {
+                if (_dynamic.Count == 0) return _options.Models;
+                // pi currentModels：基线保序，同 type+id 就地替换，否则追加。
+                var merged = new List<ProviderModel>(_options.Models);
+                foreach (var model in _dynamic)
+                {
+                    var index = merged.FindIndex(
+                        entry => entry.Type == model.Type && entry.Id == model.Id);
+                    if (index >= 0) merged[index] = model;
+                    else merged.Add(model);
+                }
+                return merged;
+            }
+        }
+
+        private void SetDynamic(IReadOnlyList<ProviderModel> models)
+        {
+            lock (_gate) _dynamic = models;
+        }
+
+        // pi hasKnownModelType（models.ts:135）；C# 的 ProviderModel 是封闭三型，此处是口径自证。
+        private static bool HasKnownModelType(ProviderModel model)
+            => model.Type is ModelType.Chat or ModelType.Image or ModelType.Classifier;
     }
 }

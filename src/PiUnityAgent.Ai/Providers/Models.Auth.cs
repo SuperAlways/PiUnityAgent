@@ -143,10 +143,97 @@ public sealed partial class Models
             .ToList();
     }
 
-    public Task<ModelsRefreshResult> RefreshAsync(ModelsRefreshOptions? options = null)
+    /// <summary>
+    /// D2：动态模型目录刷新（pi Models.refresh models.ts:565-623 的顺序化版本）。
+    /// 只触达 IRefreshableProvider；单个 provider 失败收集进 Errors，其余照常；取消 → Aborted。
+    /// S4 偏离 pi：AllowNetwork 缺省 false（Unity 内嵌不擅自出网，pi 缺省 true）；
+    /// Credential 取 store 原样（不在此处做 apiKey.resolve/OAuth 派生，交给 FetchModels 侧）。
+    /// </summary>
+    public async Task<ModelsRefreshResult> RefreshAsync(ModelsRefreshOptions? options = null)
     {
-        // TODO(S4, D2): 动态模型目录刷新。
-        return Task.FromResult(new ModelsRefreshResult(false, new Dictionary<string, Exception>()));
+        var ct = options?.CancellationToken ?? default;
+        var errors = new Dictionary<string, Exception>();
+        if (ct.IsCancellationRequested) return new ModelsRefreshResult(true, errors);
+
+        var selected = options?.Providers is { } wanted
+            ? new HashSet<string>(wanted, StringComparer.Ordinal)
+            : null;
+        foreach (var entry in GetProviders())
+        {
+            if (entry is not IRefreshableProvider refreshable) continue;
+            if (selected is not null && !selected.Contains(entry.Id)) continue;
+
+            try
+            {
+                // pi：credential 读失败不挡恢复阶段——先记下，恢复照跑，之后按 provider 抛出。
+                Exception? credentialError = null;
+                Credential? credential = null;
+                try
+                {
+                    credential = await ReadCredentialAsync(entry.Id, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception error)
+                {
+                    credentialError = error;
+                }
+
+                var stored = await _modelsStore.ReadAsync(
+                    entry.Id,
+                    new ModelsStoreOperationOptions { CancellationToken = ct }).ConfigureAwait(false);
+
+                var context = new RefreshModelsContext
+                {
+                    Credential = credential,
+                    Stored = stored,
+                    BaseUrl = entry.BaseUrl,
+                    // credential 读失败只走恢复阶段（对齐 pi：恢复先于 auth/网络）。
+                    AllowNetwork = (options?.AllowNetwork ?? false) && credentialError is null,
+                    Force = options?.Force ?? false,
+                    CancellationToken = ct,
+                    Publish = publication => PublishModelsAsync(entry.Id, publication, ct),
+                };
+                await refreshable.RefreshModelsAsync(context).ConfigureAwait(false);
+                if (credentialError is not null) throw credentialError;
+            }
+            catch (OperationCanceledException)
+            {
+                return new ModelsRefreshResult(true, errors);
+            }
+            catch (Exception error)
+            {
+                errors[entry.Id] = error;
+            }
+        }
+
+        return new ModelsRefreshResult(false, errors);
+    }
+
+    /// <summary>
+    /// pi publishProviderModels（models.ts:517-542）的顺序化等价：
+    /// 先 store 删/写（成功才算数），再点亮 Update。store 失败原样抛给 RefreshAsync 按 provider 收集（旧表保留）；
+    /// 返回 true=发布生效；false=发布前发现取消（不动 store 也不点亮）。
+    /// </summary>
+    private async Task<bool> PublishModelsAsync(
+        string providerId,
+        ModelsPublication publication,
+        CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return false;
+        var storeOptions = new ModelsStoreOperationOptions { CancellationToken = ct };
+        if (publication.Delete)
+        {
+            await _modelsStore.DeleteAsync(providerId, storeOptions).ConfigureAwait(false);
+        }
+        else if (publication.Persist is not null)
+        {
+            await _modelsStore.WriteAsync(providerId, publication.Persist, storeOptions).ConfigureAwait(false);
+        }
+        publication.Update?.Invoke();
+        return true;
     }
 
     public Task<Credential> LoginAsync(
