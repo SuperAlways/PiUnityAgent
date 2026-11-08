@@ -198,7 +198,37 @@ public static class OpenAiCompletions
             var request = BuildRequest(model, normalizedContext, options, payload, apiKey, cacheSessionId, compat);
 
             var response = await ProviderRetry.RunAsync(
-                requestToken => fetch(request, fetchOptions, requestToken),
+                async requestToken =>
+                {
+                    var attempt = await fetch(request, fetchOptions, requestToken).ConfigureAwait(false);
+                    if (attempt.StatusCode is < 200 or >= 300)
+                    {
+                        // pi：SDK 在 retryProviderRequest 内对非 2xx 抛错，因此 408/409/429/5xx 会被重试。
+                        // ProviderRetry 只识别 FetchException，故这里抛携带 status/headers/body 的 FetchException。
+                        string errorBody;
+                        try
+                        {
+                            errorBody = await ReadBodyAsync(attempt.Body, requestToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            await attempt.DisposeAsync().ConfigureAwait(false);
+                        }
+
+                        throw new FetchException(
+                            FetchErrorKind.Protocol,
+                            errorBody.Trim().Length > 0
+                                ? $"{attempt.StatusCode}: {errorBody}"
+                                : $"HTTP {attempt.StatusCode} (no body)")
+                        {
+                            StatusCode = attempt.StatusCode,
+                            Headers = attempt.Headers,
+                            ErrorBody = errorBody,
+                        };
+                    }
+
+                    return attempt;
+                },
                 new ProviderRetryOptions
                 {
                     MaxRetries = options?.MaxRetries ?? 0,
@@ -207,12 +237,6 @@ public static class OpenAiCompletions
                 lifetime.Token).ConfigureAwait(false);
 
             await using var responseScope = response;
-            if (response.StatusCode is < 200 or >= 300)
-            {
-                var errorBody = await ReadBodyAsync(response.Body, lifetime.Token).ConfigureAwait(false);
-                throw new ProviderHttpError(response.StatusCode, errorBody);
-            }
-
             if (options?.OnResponse is { } onResponse)
             {
                 await onResponse(
@@ -2894,6 +2918,10 @@ public static class OpenAiCompletions
             Transport = options?.Transport,
             WebsocketConnectTimeoutMs = options?.WebsocketConnectTimeoutMs,
             Telemetry = options?.Telemetry,
+            // pi buildBaseOptions（simple-options.ts）：观察钩子必须透传，否则 simple 路径静默丢钩子。
+            OnPayload = options?.OnPayload,
+            OnResponse = options?.OnResponse,
+            OnProviderStreamEvent = options?.OnProviderStreamEvent,
             ToolChoice = options?.ToolChoice switch
             {
                 ToolChoice.Auto => (JsonNode?)"auto",
@@ -3160,31 +3188,12 @@ public static class OpenAiCompletions
     // 错误格式化（pi error-body.ts 的 C# 例外形状等价）
     // ---------------------------------------------------------------------
 
-    private sealed class ProviderHttpError : Exception
-    {
-        public ProviderHttpError(int status, string body)
-            : base(body.Trim().Length > 0 ? $"{status}: {body}" : $"HTTP {status} (no body)")
-        {
-            Status = status;
-            Body = body;
-        }
-
-        public int Status { get; }
-        public string Body { get; }
-    }
-
     private static string FormatProviderError(Exception error)
     {
         int? status;
         string? body;
         string message;
-        if (error is ProviderHttpError http)
-        {
-            status = http.Status;
-            body = http.Body;
-            message = http.Message;
-        }
-        else if (error is FetchException fetchError)
+        if (error is FetchException fetchError)
         {
             status = fetchError.StatusCode;
             body = fetchError.ErrorBody;
@@ -3352,7 +3361,6 @@ public static class OpenAiCompletions
         public string? Property { get; init; }
         public GrammarToolInputJsonBuffer? Buffer { get; init; }
         public int? StreamIndex { get; set; }
-        public bool Finished { get; init; }
 
         public static ToolCallInput Json(ToolCallArguments arguments, int? streamIndex)
             => new() { Kind = ToolCallInputKind.Json, Arguments = arguments, StreamIndex = streamIndex };

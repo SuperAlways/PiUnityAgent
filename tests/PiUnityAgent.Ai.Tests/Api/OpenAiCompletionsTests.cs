@@ -409,6 +409,8 @@ public class OpenAiCompletionsTests
         {
             MaxTokens = 512,
             SessionId = "session-1",
+            // 钉死 retention，断言不受 PI_CACHE_RETENTION 环境变量影响（long 会写入 prompt_cache_key）。
+            CacheRetention = CacheRetention.Short,
             OnPayload = (payload, _) =>
             {
                 payloadSeen = payload?.DeepClone();
@@ -581,5 +583,136 @@ public class OpenAiCompletionsTests
         Assert.Equal("get_weather", tools[0]?["function"]?["name"]?.GetValue<string>());
         // 非 strict-mode provider（默认）不写 strict 字段。
         Assert.Null(tools[0]?["function"]?["strict"]);
+    }
+
+    [Fact]
+    public async Task Http_429_Is_Retried_Inside_ProviderRetry()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            "{\"error\":{\"message\":\"rate limited\"}}",
+            status: 429,
+            headers: new Dictionary<string, string?> { ["retry-after-ms"] = "1" });
+        fetch.EnqueueText(
+            Sse(ChoiceChunk("{\"content\":\"recovered\"}"), ChoiceChunk("{}", finishReason: "stop")),
+            headers: SseHeaders());
+
+        var options = CreateOptions(fetch) with { MaxRetries = 1 };
+        var events = await CollectAsync(OpenAiCompletions.Stream(
+            CreateModel(), CreateContext(), options));
+
+        // 429 在重试范围内（pi：SDK 在 retryProviderRequest 内抛非 2xx）→ 第二次尝试成功。
+        Assert.Equal(2, fetch.Requests.Count);
+        Assert.Equal($"{DefaultBaseUrl}/chat/completions", fetch.Requests[0].Url);
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(StopReason.Stop, done.Reason);
+        Assert.Equal("recovered", Assert.IsType<TextContent>(done.Message.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Http_400_Is_Not_Retried()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            "{\"error\":{\"message\":\"bad request\"}}",
+            status: 400,
+            headers: new Dictionary<string, string?> { ["content-type"] = "application/json" });
+
+        var options = CreateOptions(fetch) with { MaxRetries = 3 };
+        var events = await CollectAsync(OpenAiCompletions.Stream(
+            CreateModel(), CreateContext(), options));
+
+        // 400 不可重试：即使 MaxRetries=3 也只调一次 Fetch，编码为单条 Error 终态。
+        Assert.Single(fetch.Requests);
+        var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("400", error.Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains("bad request", error.Message.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StreamSimple_Forwards_Hooks()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(ChoiceChunk("{\"content\":\"ok\"}"), ChoiceChunk("{}", finishReason: "stop")),
+            headers: SseHeaders());
+
+        JsonNode? payloadSeen = null;
+        ProviderResponse? responseSeen = null;
+        var streamChunkCount = 0;
+        var options = new SimpleStreamOptions
+        {
+            ApiKey = "test-key",
+            MaxTokens = 256,
+            Fetch = fetch.Fetch,
+            OnPayload = (payload, _) =>
+            {
+                payloadSeen = payload?.DeepClone();
+                if (payload is JsonObject obj)
+                {
+                    obj["extra"] = "simple";
+                }
+
+                return Task.FromResult<JsonNode?>(payload);
+            },
+            OnResponse = (response, _) =>
+            {
+                responseSeen = response;
+                return Task.CompletedTask;
+            },
+            OnProviderStreamEvent = (_, _) =>
+            {
+                Interlocked.Increment(ref streamChunkCount);
+                return Task.CompletedTask;
+            },
+        };
+
+        var events = await CollectAsync(OpenAiCompletions.StreamSimple(
+            CreateModel(), CreateContext(), options));
+
+        Assert.Equal(
+            new[] { "start", "text_start", "text_delta", "text_end", "done" },
+            EventTypes(events));
+        Assert.NotNull(payloadSeen);
+        Assert.NotNull(responseSeen);
+        Assert.Equal(200, responseSeen.Status);
+        Assert.Equal(2, streamChunkCount);
+
+        var body = Assert.IsType<JsonObject>(
+            JsonNode.Parse(Encoding.UTF8.GetString(Assert.Single(fetch.Requests).Body.Span)));
+        Assert.Equal("simple", body["extra"]?.GetValue<string>());
+        Assert.Equal(256, body["max_completion_tokens"]?.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Invalid_Tool_Arguments_Json_Falls_To_ArgumentsError_Not_Terminal()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad\","
+                + "\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}",
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":"
+                + "{\"arguments\":\"{city: SF}\"}}]}}]}",
+                ChoiceChunk("{}", finishReason: "tool_calls")),
+            headers: SseHeaders());
+
+        var events = await CollectAsync(OpenAiCompletions.Stream(
+            CreateModel(), CreateContext(), CreateOptions(fetch)));
+
+        // pi parseToolCallArguments 语义：非法 JSON 落 block.argumentsError，流照常 Done（非 Error 终态）。
+        Assert.Equal(
+            new[] { "start", "toolcall_start", "toolcall_delta", "toolcall_delta", "toolcall_end", "done" },
+            EventTypes(events));
+
+        var end = Assert.IsType<AssistantMessageEvent.ToolCallEnd>(events[^2]);
+        Assert.Equal("call_bad", end.ToolCall.Id);
+        Assert.NotNull(end.ToolCall.ArgumentsError);
+        Assert.Contains("Received arguments", end.ToolCall.ArgumentsError!, StringComparison.Ordinal);
+        Assert.Empty(end.ToolCall.Arguments);
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(StopReason.ToolUse, done.Reason);
     }
 }
