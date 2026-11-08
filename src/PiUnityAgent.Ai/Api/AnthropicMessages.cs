@@ -398,7 +398,16 @@ public static class AnthropicMessages
     // ---------------------------------------------------------------------
 
     /// <summary>请求参数与「是否含 <c>strict: "prefer"</c> 工具」的打包结果（pi buildParams 返回值）。</summary>
-    internal sealed record BuiltParams(JsonObject Params, bool HasPreferredStrictTools, List<string> Betas);
+    internal sealed record BuiltParams(JsonObject Params, bool HasPreferredStrictTools, List<string> Betas)
+    {
+        /// <summary>
+        /// effort-message（adaptive 中段 effort）模式生效时的当前 effort（pi buildParams 返回
+        /// <c>providerThinkingLevel</c>，anthropic-messages.ts:1326）。模式未生效为 null。
+        /// stream（Task 3）把它记到 <c>output.providerThinkingLevel</c>，随 assistant 消息落库，
+        /// 供下一回合 <c>insertThinkingLevelMessages</c> 重放历史 effort 标记。
+        /// </summary>
+        public string? ProviderThinkingLevel { get; init; }
+    }
 
     internal static BuiltParams BuildParamsForRequest(
         Model model,
@@ -623,7 +632,11 @@ public static class AnthropicMessages
             }
         }
 
-        return new BuiltParams(parameters, hasPreferredStrictTools, betaFeatures);
+        return new BuiltParams(parameters, hasPreferredStrictTools, betaFeatures)
+        {
+            // pi anthropic-messages.ts:1326：providerThinkingLevel = effortMessages ? activeEffort : undefined。
+            ProviderThinkingLevel = effortMessages ? activeEffort : null,
+        };
     }
 
     private static JsonObject DeferredToolPlaceholder() => new()

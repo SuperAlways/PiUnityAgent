@@ -827,4 +827,44 @@ public class AnthropicMessagesTests
         Assert.Equal("adaptive", body["thinking"]!["type"]!.GetValue<string>());
         Assert.Equal("low", body["output_config"]!["effort"]!.GetValue<string>());
     }
+
+    // ------------------------------------------------------------------
+    // providerThinkingLevel（pi anthropic-messages.ts:1326；Task 3 记入 output 重放）
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void BuildParams_Records_Provider_Thinking_Level_Only_In_Effort_Message_Mode()
+    {
+        var model = CreateModel();
+        var context = Context(UserMsg("hi"));
+
+        // effort-message 模式生效（supportsMidConvoEffort 且未禁 thinking）：activeEffort 记入，
+        // 且末尾确实挂着同一 effort 的 system 标记（证明模式在效）。
+        var active = AnthropicMessages.BuildParamsForRequest(
+            model, context, isOAuthToken: false,
+            new AnthropicOptions { ThinkingEnabled = true, Effort = ThinkingLevel.XHigh },
+            new AnthropicMessagesCompat { SupportsMidConvoEffort = true });
+        Assert.Equal("xhigh", active.ProviderThinkingLevel);
+        var effortMarker = active.Params["messages"]!.AsArray()[^1]!;
+        Assert.Equal("system", effortMarker["role"]!.GetValue<string>());
+        Assert.Equal("xhigh", effortMarker["output_config"]!["effort"]!.GetValue<string>());
+
+        // 模式生效但未指定 effort：activeEffort 回落 high。
+        var defaulted = AnthropicMessages.BuildParamsForRequest(
+            model, context, isOAuthToken: false, null,
+            new AnthropicMessagesCompat { SupportsMidConvoEffort = true });
+        Assert.Equal("high", defaulted.ProviderThinkingLevel);
+
+        // 模式未生效（默认 compat 无 supportsMidConvoEffort）：null。
+        var inactive = AnthropicMessages.BuildParamsForRequest(
+            model, context, isOAuthToken: false, null, new AnthropicMessagesCompat());
+        Assert.Null(inactive.ProviderThinkingLevel);
+
+        // 模式因 thinking 禁用而失效（effortMessages = supportsMidConvoEffort && !thinkingDisabled）：null。
+        var disabled = AnthropicMessages.BuildParamsForRequest(
+            model, context, isOAuthToken: false,
+            new AnthropicOptions { ThinkingEnabled = false },
+            new AnthropicMessagesCompat { SupportsMidConvoEffort = true });
+        Assert.Null(disabled.ProviderThinkingLevel);
+    }
 }
