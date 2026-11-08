@@ -9,7 +9,8 @@ namespace PiUnityAgent.Ai.Tests.Providers;
 
 /// <summary>
 /// S5 Task 6 / D1+D7 集成：Models.LoginAsync/LogoutAsync 接 FileCredentialStore、
-/// 过期 OAuth 经 provider Refresh 轮换并写回 store、profile OAuth 边界（有 fetch 才挂 OAuth）。
+/// 过期 OAuth 经 provider Refresh 轮换并写回 store、profile OAuth 边界（有 fetch 才挂 OAuth）；
+/// Task 7 补 D10 可用性锚点（stored OAuth 凭据让 profile 进可用列表）。
 /// 全程 MockFetch + 临时目录，无真实网络/浏览器。
 /// </summary>
 public sealed class S5AuthIntegrationTests : IDisposable
@@ -299,8 +300,26 @@ public sealed class S5AuthIntegrationTests : IDisposable
     }
 
     // ------------------------------------------------------------------
-    // profile OAuth 边界：有 fetch 才挂 OAuth
+    // profile OAuth 边界 + D10 可用性：有 fetch 才挂 OAuth；stored OAuth 进可用列表
     // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetAvailable_Stored_OAuth_Credential_Makes_Profile_Available_Without_Network()
+    {
+        // pi filterModels/getAvailable：可用性判定走 CheckAuthAsync——stored OAuthCredential
+        // 只看 auth.OAuth 是否存在（Models.Auth.cs），有效凭据不触发刷新网络。
+        var mock = new MockFetch();
+        var store = CreateStore();
+        await StoreOAuth(store, "anthropic", "at-1", "rt-1",
+            DateTimeOffset.Now.ToUnixTimeMilliseconds() + 30 * 60 * 1000);
+        var models = CreateModels(store, AnthropicProvider.Create(mock.Fetch));
+
+        var available = await models.GetAvailableAsync("anthropic");
+
+        Assert.NotEmpty(available);
+        Assert.All(available, model => Assert.Equal("anthropic", model.Provider));
+        Assert.Equal(0, mock.CallCount);
+    }
 
     [Fact]
     public void Profile_Without_Fetch_Keeps_ApiKey_Only_Behavior()

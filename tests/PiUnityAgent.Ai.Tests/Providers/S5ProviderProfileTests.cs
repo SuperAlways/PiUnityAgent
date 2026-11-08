@@ -243,13 +243,14 @@ public class S5ProviderProfileTests
     }
 
     // ---------------------------------------------------------------------
-    // S5 范围边界：本任务不接 OAuth / 分类 / 图片
+    // S5 范围边界：无 OAuth fetch 的 profile 只走 api-key 面（分类/图片后置 D4/D5）
     // ---------------------------------------------------------------------
 
     [Theory, MemberData(nameof(ProfileVariants))]
-    public void Profiles_Declare_No_OAuth_In_Task5(ProfileExpectation expected)
+    public void Profiles_Without_OAuth_Fetch_Keep_ApiKey_Only(ProfileExpectation expected)
     {
-        // Task 6（D1）给 anthropic/openrouter 接 LazyOAuth；本任务钉死只走 api-key 面。
+        // CreateProfile() 不传 oauthFetch——Task 6（D1）已给 anthropic/openrouter 接
+        // LazyOAuth，但仅在宿主注入 fetch 时挂载（S5AuthIntegrationTests.Profile_With_Fetch_Attaches_Lazy_OAuth）。
         var provider = CreateProfile(expected.Id);
         Assert.Null(provider.Auth.OAuth);
     }

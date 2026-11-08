@@ -10,7 +10,7 @@ namespace PiUnityAgent.Ai.Providers;
 /// Anthropic profile（pi providers/anthropic.ts 的 api-key 面）。
 /// 认证链：stored key → <c>ANTHROPIC_AUTH_TOKEN</c>（以 <c>Authorization: Bearer</c> 传递）
 /// → <c>ANTHROPIC_OAUTH_TOKEN</c>/<c>ANTHROPIC_API_KEY</c>（按序）。
-/// 工作负载身份联合（federation env 兜底）后置 <c>TODO(S5,D1)</c>；
+/// 工作负载身份联合（federation env 兜底）后置 <c>TODO(后续扩展,D15)</c>；
 /// OAuth（Claude Pro/Max 订阅）在 S5 Task 6 经 LazyOAuth 接入。
 /// </summary>
 public static class AnthropicProvider
@@ -84,9 +84,9 @@ public static class AnthropicProvider
                     AuthTokenEnv);
             }
 
-            // TODO(S5,D1): 工作负载身份联合按 pi anthropic.ts:53-69 后置——三必需 env
+            // TODO(后续扩展,D15): 工作负载身份联合按 pi anthropic.ts:53-69 后置——三必需 env
             // （federation rule/organization/identity token file）+ 两可选（service account/workspace）
-            // 收进 AuthResult.Env，source="workload identity federation"；OAuth 走 Task 6 的 LazyOAuth。
+            // 收进 AuthResult.Env，source="workload identity federation"；OAuth 已走 LazyOAuth（D1）。
             foreach (var envVar in new[] { OAuthTokenEnv, ApiKeyEnv })
             {
                 var apiKey = await EnvAsync(envVar).ConfigureAwait(false);
