@@ -54,12 +54,12 @@ public class StaticProviderTests
             seenOptions = options;
             return ProviderTestSupport.DoneStream(model, context, options);
         });
-        var simple = new SimpleStreamOptions { ThinkingLevel = ModelThinkingLevel.High };
+        var simple = new SimpleStreamOptions { Reasoning = ThinkingLevel.High };
 
         provider.StreamSimple(model, context, simple);
 
         Assert.IsType<SimpleStreamOptions>(seenOptions);
-        Assert.Equal(ModelThinkingLevel.High, ((SimpleStreamOptions)seenOptions!).ThinkingLevel);
+        Assert.Equal(ThinkingLevel.High, ((SimpleStreamOptions)seenOptions!).Reasoning);
     }
 
     [Fact]

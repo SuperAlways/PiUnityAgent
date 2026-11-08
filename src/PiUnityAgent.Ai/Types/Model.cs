@@ -40,7 +40,7 @@ public abstract record ProviderModel
 
     public ModelInputLimits? InputLimits { get; init; }
     public ModelCost Cost { get; init; } = new();
-    public IReadOnlyDictionary<string, string?>? Headers { get; init; }
+    public IReadOnlyDictionary<string, string>? Headers { get; init; }
 
     public abstract ModelType Type { get; }
 }

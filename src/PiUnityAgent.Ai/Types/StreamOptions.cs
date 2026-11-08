@@ -10,10 +10,8 @@ namespace PiUnityAgent.Ai.Types;
 public record StreamOptions
 {
     public string? ApiKey { get; init; }
-    public string? BaseUrl { get; init; }
     public int? MaxTokens { get; init; }
     public double? Temperature { get; init; }
-    public IReadOnlyList<string>? StopSequences { get; init; }
     public string? SessionId { get; init; }
     public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public JsonObject? SamplingParams { get; init; }
@@ -35,7 +33,11 @@ public record StreamOptions
     public int? WebsocketConnectTimeoutMs { get; init; }
     public TelemetrySpan? Telemetry { get; init; }
 
-    public Func<JsonObject, ProviderModel, Task<JsonObject?>>? OnPayload { get; init; }
+    /// <summary>pi transformHeaders：请求头出请求头的变换；在进 provider 前执行（provider 不感知）。</summary>
+    public Func<IReadOnlyDictionary<string, string?>, Task<IReadOnlyDictionary<string, string?>>>? TransformHeaders { get; init; }
+
+    /// <summary>pi onPayload：整个请求 payload 出 payload 的变换；输入/输出均为通用 JSON 节点。</summary>
+    public Func<JsonNode?, ProviderModel, Task<JsonNode?>>? OnPayload { get; init; }
     public Func<ProviderResponse, ProviderModel, Task>? OnResponse { get; init; }
     public Func<JsonNode, ProviderModel, Task>? OnProviderStreamEvent { get; init; }
 }

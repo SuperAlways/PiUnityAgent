@@ -187,7 +187,7 @@ public class ModelsTests
             return ProviderTestSupport.DoneStream(model, context, options);
         });
         models.SetProvider(provider);
-        var simple = new SimpleStreamOptions { ThinkingLevel = ModelThinkingLevel.High };
+        var simple = new SimpleStreamOptions { Reasoning = ThinkingLevel.High };
 
         var stream = models.StreamSimple(
             ProviderTestSupport.CreateModel(),
@@ -195,7 +195,7 @@ public class ModelsTests
             simple);
         var events = await ProviderTestSupport.CollectAsync(stream);
 
-        Assert.Equal(ModelThinkingLevel.High, seenOptions!.ThinkingLevel);
+        Assert.Equal(ThinkingLevel.High, seenOptions!.Reasoning);
         Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
     }
 

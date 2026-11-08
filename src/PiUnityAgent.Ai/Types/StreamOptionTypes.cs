@@ -51,13 +51,7 @@ public sealed record DeferredCancelOptions : StreamOptions
 
 public sealed record ProviderResponse(
     int Status,
-    IReadOnlyDictionary<string, string?> Headers);
-
-public sealed record ClientIdentity
-{
-    public string? UserAgent { get; init; }
-    public IReadOnlyDictionary<string, string>? Headers { get; init; }
-}
+    IReadOnlyDictionary<string, string> Headers);
 
 public sealed record TelemetrySpan
 {

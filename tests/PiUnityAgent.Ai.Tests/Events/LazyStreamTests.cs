@@ -151,4 +151,67 @@ public class LazyStreamTests
         Assert.Equal(StopReason.Error, done.StopReason);
         Assert.Contains("null", done.ErrorMessage);
     }
+
+    [Fact]
+    public async Task Observer_Receives_Events_And_Result()
+    {
+        var model = CreateModel();
+        var events = new List<AssistantMessageEvent>();
+        var results = new List<AssistantMessage?>();
+        var observer = new RecordingObserver(events, results);
+
+        var stream = LazyStream.Run(model, () =>
+            Task.FromResult<IAssistantMessageEventStream>(DoneSource(model)), observer);
+        await stream.WaitForDoneAsync();
+
+        Assert.Contains(events, e => e is AssistantMessageEvent.Done);
+        Assert.Single(results);
+        Assert.Equal(StopReason.Stop, results[0]!.StopReason);
+    }
+
+    [Fact]
+    public async Task Observer_Receives_Error_Message_On_Setup_Failure()
+    {
+        var model = CreateModel();
+        var results = new List<AssistantMessage?>();
+        var observer = new RecordingObserver(new List<AssistantMessageEvent>(), results);
+
+        var stream = LazyStream.Run(model,
+            () => throw new InvalidOperationException("setup failed"),
+            observer);
+        var done = await stream.WaitForDoneAsync();
+
+        Assert.Single(results);
+        Assert.Same(done, results[0]);
+        Assert.Equal(StopReason.Error, done.StopReason);
+    }
+
+    [Fact]
+    public async Task Observer_OnResult_Is_Called_Exactly_Once_On_Success()
+    {
+        var model = CreateModel();
+        var results = new List<AssistantMessage?>();
+        var observer = new RecordingObserver(new List<AssistantMessageEvent>(), results);
+
+        var stream = LazyStream.Run(model, () =>
+            Task.FromResult<IAssistantMessageEventStream>(DoneSource(model)), observer);
+        var done = await stream.WaitForDoneAsync();
+
+        // 消费完流再等结果，OnResult 仍只发生一次（End 后置，不随消费次数重复）。
+        await foreach (var _ in stream) { }
+        Assert.Same(done, results.Single());
+    }
+
+    private sealed class RecordingObserver : ILazyStreamObserver
+    {
+        private readonly List<AssistantMessageEvent> _events;
+        private readonly List<AssistantMessage?> _results;
+        public RecordingObserver(List<AssistantMessageEvent> events, List<AssistantMessage?> results)
+        {
+            _events = events;
+            _results = results;
+        }
+        public void OnEvent(AssistantMessageEvent @event) => _events.Add(@event);
+        public void OnResult(AssistantMessage? result) => _results.Add(result);
+    }
 }
