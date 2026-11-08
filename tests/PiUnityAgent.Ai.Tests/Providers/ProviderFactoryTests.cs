@@ -58,8 +58,8 @@ public class ProviderFactoryTests
         {
             Id = "p2",
             Auth = Keyless(),
-            Models = new[] { ProviderTestSupport.CreateModel("m1", "p2") with { Api = "missing" } },
-            ApiByApi = new Dictionary<string, ProviderStreams>(),
+            Models = Array.Empty<ProviderModel>(),
+            ApiByApi = new Dictionary<string, ProviderStreams> { ["other"] = Streams() },
         });
         var missingStream = missing.Stream(
             ProviderTestSupport.CreateModel("m1", "p2") with { Api = "missing" },
@@ -69,12 +69,32 @@ public class ProviderFactoryTests
     }
 
     [Fact]
+    public void Factory_Rejects_Empty_ApiByApi_Without_Other_Implementation()
+    {
+        Assert.Throws<ModelsError>(() => ProviderFactory.Create(new CreateProviderOptions
+        {
+            Id = "p1",
+            Auth = Keyless(),
+            Models = Array.Empty<ProviderModel>(),
+            ApiByApi = new Dictionary<string, ProviderStreams>(),
+        }));
+        Assert.Throws<ModelsError>(() => ProviderFactory.Create(new CreateProviderOptions
+        {
+            Id = "p1",
+            Auth = Keyless(),
+            Models = Array.Empty<ProviderModel>(),
+            ApiByApi = new Dictionary<string, ProviderStreams> { ["ghost"] = null! },
+        }));
+    }
+
+    [Fact]
     public void Factory_Exposes_Images_And_Classifier_Capabilities()
     {
         var provider = ProviderFactory.Create(new CreateProviderOptions
         {
             Id = "p1",
             Auth = Keyless(),
+            Models = Array.Empty<ProviderModel>(),
             Images = new Dictionary<string, ProviderImages>
             {
                 ["img"] = new()
@@ -110,6 +130,7 @@ public class ProviderFactoryTests
         {
             Id = "p1",
             Auth = Keyless(),
+            Models = Array.Empty<ProviderModel>(),
             Api = Streams(),
             ApiByApi = new Dictionary<string, ProviderStreams> { ["faux"] = Streams() },
         }));
@@ -117,6 +138,7 @@ public class ProviderFactoryTests
         {
             Id = "p1",
             Auth = new ProviderAuth(),
+            Models = Array.Empty<ProviderModel>(),
             Api = Streams(),
         }));
     }

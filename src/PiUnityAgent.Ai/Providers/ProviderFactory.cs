@@ -20,10 +20,12 @@ public static class ProviderFactory
             throw new ModelsError(ModelsErrorCode.Provider,
                 $"Provider {options.Id}: specify Api or ApiByApi, not both.");
 
-        // 校验的是"槽位是否提供"而非"集合非空"：空 ApiByApi 合法，缺 api 时按 MissingApi 报错流。
-        var hasStreams = options.Api is not null || options.ApiByApi is not null;
-        var hasImages = options.Images?.Count > 0;
-        var hasClassifiers = options.Classifiers?.Count > 0;
+        // 校验的是"具体实现是否至少一个"（对齐 pi models.ts:1087-1091 / pi.net CreateProvider.cs:57-65）：
+        // 数的是非 null 实现——空或全 null 的 ApiByApi 不算实现；缺 api 映射仍按 MissingApi 报错流。
+        var hasStreams = options.Api is not null
+            || options.ApiByApi?.Values.Any(entry => entry is not null) == true;
+        var hasImages = options.Images?.Values.Any(entry => entry is not null) == true;
+        var hasClassifiers = options.Classifiers?.Values.Any(entry => entry is not null) == true;
         if (!hasStreams && !hasImages && !hasClassifiers)
             throw new ModelsError(ModelsErrorCode.Provider,
                 $"Provider {options.Id}: at least one of Api/ApiByApi/Images/Classifiers is required.");

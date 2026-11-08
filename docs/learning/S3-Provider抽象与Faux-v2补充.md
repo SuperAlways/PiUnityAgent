@@ -78,7 +78,7 @@ IAssistantMessageEventStream
 **Models/Provider 门面**：
 
 - `ModelsError`/`ModelsErrorCode`（ModelSource/ModelValidation/Provider/Stream/Auth/OAuth）替代裸异常；例外：流式 setup 的未知 provider 现抛 `InvalidOperationException`，由 LazyStream 编码为终态 Error（实现口径，登记 B）。
-- `ProviderFactory.Create(CreateProviderOptions)`：单 `Api` 或 `ApiByApi` 按 `model.Api` 分派；**空 `ApiByApi` 合法**（校验“槽位是否提供”），缺 api 在 Stream 终态 `ModelsError(Stream)`；有 `Images/Classifiers` 时产物实现 `IImagesProvider`/`IClassifierProvider`。`StaticProvider` 保留为唯一额外公共便捷类型（D 登记）。
+- `ProviderFactory.Create(CreateProviderOptions)`：`Models` **required**（回归 pi 形状；pi.net 默认 `[]` 不采）；单 `Api` 或 `ApiByApi` 按 `model.Api` 分派；“至少一个实现”校验数**非 null 实现**（对齐 pi `models.ts:1087-1091`）——**空/全 null `ApiByApi` 无其他实现抛 `ModelsError(Provider)`**（预审计修正，推翻早前“空表合法”裁定），合法 provider 缺 api 在 Stream 终态 `ModelsError(Stream)`；有 `Images/Classifiers` 时产物实现 `IImagesProvider`/`IClassifierProvider`。`StaticProvider` 保留为唯一额外公共便捷类型（D 登记）。
 - 可用性过滤拆到 `IFilterableProvider`（`FilterModels` + nullable `FilterAllModels`，未实现返回 null；fallback 保序按 chat id 过滤）；`IRefreshableProvider` 只剩 refresh。
 - `ClientIdentity` 改 pi 形状：`UserAgentMode`/`ClientAttribution`/`AttributionSet`/`Version` + `ClientIdentityMerger.Merge` 逐字段合并（不是 `??`）；删除自造 `Headers` 字段；身份头生成属 D8 后置。
 

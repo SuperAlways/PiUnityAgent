@@ -14,7 +14,7 @@ public sealed record CreateProviderOptions
     public string? BaseUrl { get; init; }
     public IReadOnlyDictionary<string, string?>? Headers { get; init; }
     public required ProviderAuth Auth { get; init; }
-    public IReadOnlyList<ProviderModel> Models { get; init; } = Array.Empty<ProviderModel>();
+    public required IReadOnlyList<ProviderModel> Models { get; init; }
 
     public Func<RefreshModelsContext, Task<IReadOnlyList<ProviderModel>>>? FetchModels { get; init; }
     public Func<IReadOnlyList<Model>, Credential?, IReadOnlyList<Model>>? FilterModels { get; init; }

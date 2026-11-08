@@ -48,7 +48,7 @@
 | `auth/types.ts`（Credential/CredentialStore） | `Auth/Credential.cs` | OAuthCredential 三字段 required；store=`Read/List/Modify/Delete`；modify null=不变、返回写后值，per-provider `SemaphoreSlim` |
 | `auth/types.ts`（ApiKeyAuth/OAuthAuth） | `Auth/ProviderAuth.cs` | `ApiKeyAuth.Resolve` 必需（Check/Login 可选，Check 权威）；`OAuthAuth`（Login/Refresh/ToAuth，无 Logout=store delete） |
 | `models.ts`（modelsStore/publication） | `Auth/ModelsStore.cs` | `IModelsStore`/`ModelsStoreEntry`（models/lastModified/checkedAt/etag）/`ModelsPublication`（persist 与 delete 二选一） |
-| `createProvider` | `CreateProvider.cs` + `ProviderFactory.cs` | `CreateProviderOptions`；单 `Api` 或 `ApiByApi` 按 `model.Api` 分派；**空 `ApiByApi` 合法**，缺 api 终态 `ModelsError(Stream)`；Images/Classifiers 产物实现能力接口 |
+| `createProvider` | `CreateProvider.cs` + `ProviderFactory.cs` | `CreateProviderOptions`（`Models` required，回归 pi 形状）；单 `Api` 或 `ApiByApi` 按 `model.Api` 分派；“至少一个实现”校验数**非 null 实现**（models.ts:1087-1091）——**空/全 null `ApiByApi` 无其他实现抛 `ModelsError(Provider)`**，缺 api 终态 `ModelsError(Stream)`；Images/Classifiers 产物实现能力接口 |
 | `Provider.streamSimple` | `ProviderStreams.cs` | `SimpleStreamFn` 独立 delegate；`FetchDeferred`/`CancelDeferred` 形状（D3） |
 | `filterModels`/`filterAllModels` | `ProviderCapabilities.cs` | `IFilterableProvider`；`FilterAllModels` 未实现返回 null，Models fallback 保序 |
 | `ModelsError` | `ModelsError.cs` | `ModelsErrorCode` 六值（ModelSource/ModelValidation/Provider/Stream/Auth/OAuth） |
