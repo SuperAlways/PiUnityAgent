@@ -1,6 +1,6 @@
 # S5 Anthropic + Google 协议适配设计 spec（2026-11-08）
 
-> **状态**：已实现（`feature/s5-anthropic-google`，实现完成待独立审计；偏离表 §10 为 Task 1–6 报告汇总的待审计声明）。
+> **状态**：已实现（`feature/s5-anthropic-google`）；独立审计 **PASS_WITH_REGISTERED_DEVIATIONS**（报告 `docs/audits/2026-11-09-S5-deviation-audit.md`；3 条低风险未登记偏离已补 §10.1/§10.2）；待用户验收合 main。
 > **范围**：S5 = `anthropic-messages` + `google-generative-ai`；首批厂商：Anthropic、MiniMax/MiniMax CN、Google、Fireworks、Vercel AI Gateway、OpenRouter（用户裁决：核心 5 + OpenRouter）。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实）。
 > **上位规则**：[`docs/03 §1.3–§1.6`](../../03-开发方法-拆解学习与移植约定.md)、[`docs/05 §2.3`](../../05-教学阶段路线.md)。
@@ -201,7 +201,7 @@ public static class GoogleGenerativeAi
 ## 10. 三方偏离表（S5 收尾汇总，2026-11-09 Task 7 收编 Task 1–6 报告）
 
 > ⚠️ **待审计声明**：下表由 Task 1–6 报告汇总而成，是**待审计声明**而非已核验结论。
-> 独立审计（`docs/audits/2026-11-08-S5-deviation-audit.md`）必须逐项核验类别判定与"我们"列现状（代码/测试证据），不得照抄本表；核验出不符时以审计报告为准并回改本表。
+> 独立审计（`docs/audits/2026-11-09-S5-deviation-audit.md`）必须逐项核验类别判定与"我们"列现状（代码/测试证据），不得照抄本表；核验出不符时以审计报告为准并回改本表。
 
 ### 10.1 公共/传输
 
@@ -218,6 +218,7 @@ public static class GoogleGenerativeAi
 | 传输（两协议） | Anthropic/@google SDK 内部 fetch | HttpClient | 注入 `FetchFunction` 直发 REST | B/D | 与 S4 同一通讯缝 |
 | Google 自定义 fetch | pi 拒绝 | — | Fetch 端口统一 | B/D | 无 |
 | 共享 helper 私有副本 | 共享 util（transform-messages/strict-sampling/错误格式化等） | 同左左源 | 各适配器私有拷贝（4+ 份） | D/TODO | 去重需跨文件重构，留统一批次 |
+| 默认头 null 抑制扩展 | `createClient` 默认头合并 | 同 | `IsHeaderSuppressed` 扩展：默认头也可被 null 抑制（S4 无此行为） | D | 更灵活；与 pi 默认头合并语义有扩展面（审计补登记） |
 
 ### 10.2 Anthropic
 
@@ -235,6 +236,8 @@ public static class GoogleGenerativeAi
 | StreamSimple 缺 key | SDK 抛异常 | — | 终态 `Error` 事件（无请求发出） | B | 与全适配器统一终态口径一致 |
 | 基类 options 透传 | 对象展开（TS 结构兼容） | 逐字段平铺 | 每适配器 `ToXxxOptions(StreamOptions?)` 逐字段拷贝转换器（Task 5b 修复） | D | 公开签名零改动；新基类字段需同步转换器清单 |
 | strict-fallback 重发 | stream 循环 | — | 已实现（Task 3，非偏离） | — | `HasPreferredStrictTools` + 诊断三件套 |
+| `AnthropicOptions.client` | 预构建 SDK client 注入 | 有 | 未移植（无 Anthropic SDK 类型；Fetch 端口承担注入缝） | A | SDK-only 形状；宿主通过 Fetch 注入，无行为差异 |
+| StreamSimple `reasoning=off`（非自适应） | 退化 NaN / `max_tokens:null` | — | 兜底 16384 | D | 更稳健；与 pi 病态路径不同（审计补登记） |
 
 ### 10.3 Google
 

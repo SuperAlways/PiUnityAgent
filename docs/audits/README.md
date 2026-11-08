@@ -9,3 +9,4 @@
 | S3 v3 | 2026-11-08 | **PASS_WITH_REGISTERED_DEVIATIONS**（N1–N8 均 Minor；N1/N2/N3/N8 修复，N4–N7 登记） | [`2026-11-08-S3-v3-deviation-audit.md`](2026-11-08-S3-v3-deviation-audit.md) | 修复/登记后由新独立审计者复核 |
 | S3 v3 复核 | 2026-11-08 | **PASS_WITH_REGISTERED_DEVIATIONS**（N1–N8 全核销；仅 R1 D14 锚点措辞） | [`2026-11-08-S3-v3-deviation-recheck.md`](2026-11-08-S3-v3-deviation-recheck.md) | R1 已订正；D14/S4 承接；待用户验收合并 |
 | S4 | 2026-11-08 | **PASS_WITH_REGISTERED_DEVIATIONS**（无 Critical/Shape gap；10 条行为级偏离已补 spec §10） | [`2026-11-08-S4-deviation-audit.md`](2026-11-08-S4-deviation-audit.md) | 登记完成；待用户验收合 main；S5 另立 spec |
+| S5 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（无 Critical/Shape gap；3 条低风险偏离已补 spec §10；D15 拆行有效登记） | [`2026-11-09-S5-deviation-audit.md`](2026-11-09-S5-deviation-audit.md) | 登记完成；待用户验收合 main |
