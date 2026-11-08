@@ -8,7 +8,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using PiUnityAgent.Ai.Api;
 using PiUnityAgent.Ai.Events;
+using PiUnityAgent.Ai.Providers;
+using PiUnityAgent.Ai.Providers.Auth;
 using PiUnityAgent.Ai.Tests.Fakes;
+using PiUnityAgent.Ai.Tests.Providers;
 using PiUnityAgent.Ai.Types;
 using Xunit;
 
@@ -1633,6 +1636,63 @@ public class AnthropicMessagesTests
         Assert.Equal(
             new[] { "start", "text_start", "text_delta", "text_end", "done" },
             EventTypes(events));
+    }
+
+    [Fact]
+    public async Task Streams_Stream_Accepts_Base_StreamOptions_And_Keeps_Auth()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
+        using var cts = new CancellationTokenSource();
+
+        // 门面 Models.Stream 走 base StreamOptions（applyAuth 之后）——适配器不得 `as` 直转丢认证。
+        var events = await CollectAsync(AnthropicMessages.Streams().Stream(
+            CreateModel(),
+            Context(UserMsg("hi")),
+            new StreamOptions
+            {
+                ApiKey = "test-key",
+                MaxTokens = 64,
+                Fetch = fetch.Fetch,
+                CancellationToken = cts.Token,
+            }));
+
+        Assert.Equal("test-key", fetch.Requests[0].Headers["x-api-key"]);
+        Assert.Equal(64, Body(fetch)["max_tokens"]!.GetValue<int>());
+        Assert.Null(events.OfType<AssistantMessageEvent.Error>().FirstOrDefault());
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+    }
+
+    [Fact]
+    public async Task Models_Stream_Resolves_Auth_Into_Anthropic_Adapter_Request()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta("end_turn"), MessageStop()), headers: SseHeaders());
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider(
+            id: "anthropic",
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "resolver",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                        new AuthResult(new ModelAuth { ApiKey = "resolved-key" }, null, "resolver")),
+                },
+            },
+            models: new[] { CreateModel() },
+            stream: (model, context, options) => AnthropicMessages.Streams().Stream(model, context, options)));
+
+        // 请求级只注入 Fetch（不带 ApiKey）：门面 applyAuth 把解析出的 key 装进 base StreamOptions，
+        // 适配器端必须原样收到（修复前 `as AnthropicOptions` 直转 → "No API key"）。
+        var events = await CollectAsync(models.Stream(
+            CreateModel(),
+            new Context { Messages = new Message[] { new UserMessage { Timestamp = 1, Content = MessageContent.From("hi") } } },
+            new StreamOptions { Fetch = fetch.Fetch }));
+
+        Assert.Equal("resolved-key", fetch.Requests[0].Headers["x-api-key"]);
+        Assert.Null(events.OfType<AssistantMessageEvent.Error>().FirstOrDefault());
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
     }
 
     /// <summary>自建 IFetchResponse：给协议测试一个可替换 Body 的响应替身。</summary>

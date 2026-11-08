@@ -112,6 +112,42 @@ public static class AnthropicMessages
         SimpleStreamOptions? options = null)
         => Run(model, context, BuildSimpleOptions(model, context, options));
 
+    /// <summary>
+    /// 基类 <see cref="StreamOptions"/>（门面 <c>Models.Stream</c> 经 applyAuth 产出）升格为本协议专属选项：
+    /// 逐字段显式拷贝全部基类字段（ApiKey/Fetch/CancellationToken/Headers/hooks…），协议专属字段保持 null。
+    /// 已是 <see cref="AnthropicOptions"/> 则原样返回；直转丢失认证正是本方法的由来。
+    /// </summary>
+    private static AnthropicOptions? ToAnthropicOptions(StreamOptions? options)
+    {
+        if (options is null) return null;
+        if (options is AnthropicOptions anthropic) return anthropic;
+        return new AnthropicOptions
+        {
+            ApiKey = options.ApiKey,
+            MaxTokens = options.MaxTokens,
+            Temperature = options.Temperature,
+            SessionId = options.SessionId,
+            Headers = options.Headers,
+            SamplingParams = options.SamplingParams,
+            TimeoutMs = options.TimeoutMs,
+            MaxRetries = options.MaxRetries,
+            MaxRetryDelayMs = options.MaxRetryDelayMs,
+            CancellationToken = options.CancellationToken,
+            Fetch = options.Fetch,
+            Identity = options.Identity,
+            Metadata = options.Metadata,
+            Env = options.Env,
+            CacheRetention = options.CacheRetention,
+            Transport = options.Transport,
+            WebsocketConnectTimeoutMs = options.WebsocketConnectTimeoutMs,
+            Telemetry = options.Telemetry,
+            TransformHeaders = options.TransformHeaders,
+            OnPayload = options.OnPayload,
+            OnResponse = options.OnResponse,
+            OnProviderStreamEvent = options.OnProviderStreamEvent,
+        };
+    }
+
     // ---------------------------------------------------------------------
     // stream（pi streamSimple + stream 的请求半程；SSE 半程归 Task 3）
     // ---------------------------------------------------------------------
@@ -120,7 +156,7 @@ public static class AnthropicMessages
     {
         var stream = new AssistantMessageEventStream();
         var compat = GetCompat(model);
-        var anthropicOptions = options as AnthropicOptions;
+        var anthropicOptions = ToAnthropicOptions(options);
         var normalizedContext = ResolveTranscript(context, compat.SupportsMidConvoSystemMessages);
 
         _ = RunCoreAsync(stream, model, normalizedContext, anthropicOptions, compat);

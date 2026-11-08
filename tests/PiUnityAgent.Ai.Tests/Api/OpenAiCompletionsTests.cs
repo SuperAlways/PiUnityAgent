@@ -715,4 +715,32 @@ public class OpenAiCompletionsTests
         var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
         Assert.Equal(StopReason.ToolUse, done.Reason);
     }
+
+    [Fact]
+    public async Task Streams_Stream_Accepts_Base_StreamOptions_And_Keeps_Auth()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(
+                ChoiceChunk("{\"content\":\"hi\"}"),
+                ChoiceChunk("{}", finishReason: "stop")),
+            headers: SseHeaders());
+        using var cts = new CancellationTokenSource();
+
+        // 门面 Models.Stream 走 base StreamOptions（applyAuth 之后）——适配器不得 `as` 直转丢认证。
+        var events = await CollectAsync(OpenAiCompletions.Streams().Stream(
+            CreateModel(),
+            CreateContext(),
+            new StreamOptions
+            {
+                ApiKey = "test-key",
+                MaxTokens = 32,
+                Fetch = fetch.Fetch,
+                CancellationToken = cts.Token,
+            }));
+
+        Assert.Equal("Bearer test-key", fetch.Requests[0].Headers["authorization"]);
+        Assert.Null(events.OfType<AssistantMessageEvent.Error>().FirstOrDefault());
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+    }
 }

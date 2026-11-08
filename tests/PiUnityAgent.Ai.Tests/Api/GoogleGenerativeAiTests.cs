@@ -1202,6 +1202,29 @@ public class GoogleGenerativeAiTests
         Assert.NotNull(streams.StreamSimple);
     }
 
+    [Fact]
+    public async Task Streams_Stream_Accepts_Base_StreamOptions_And_Keeps_Auth()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        using var cts = new CancellationTokenSource();
+
+        // 门面 Models.Stream 走 base StreamOptions（applyAuth 之后）——适配器不得 `as` 直转丢认证。
+        var events = await CollectAsync(GoogleGenerativeAi.Streams().Stream(
+            CreateBudgetModel(),
+            Context(UserMsg("hi")),
+            new StreamOptions
+            {
+                ApiKey = "test-key",
+                Fetch = fetch.Fetch,
+                CancellationToken = cts.Token,
+            }));
+
+        Assert.Equal("test-key", fetch.Requests[0].Headers["x-goog-api-key"]);
+        Assert.Null(events.OfType<AssistantMessageEvent.Error>().FirstOrDefault());
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+    }
+
     // ------------------------------------------------------------------
     // 测试替身（与 AnthropicMessagesTests 同款）
     // ------------------------------------------------------------------

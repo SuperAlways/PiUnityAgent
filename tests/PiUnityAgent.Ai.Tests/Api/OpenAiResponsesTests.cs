@@ -126,6 +126,39 @@ public class OpenAiResponsesTests
         return events;
     }
 
+    [Fact]
+    public async Task Streams_Stream_Accepts_Base_StreamOptions_And_Keeps_Auth()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(
+                CreatedEvent(),
+                ItemAdded(0, (JsonObject)JsonNode.Parse(MessageItem("msg_1"))!),
+                TextDelta(0, "hi"),
+                ItemDone(0, (JsonObject)JsonNode.Parse(MessageItem(
+                    "msg_1",
+                    "completed",
+                    new JsonArray((JsonObject)JsonNode.Parse(OutputTextContent("hi"))!)))!),
+                CompletedEvent()),
+            headers: SseHeaders());
+        using var cts = new CancellationTokenSource();
+
+        // 门面 Models.Stream 走 base StreamOptions（applyAuth 之后）——适配器不得 `as` 直转丢认证。
+        var events = await CollectAsync(OpenAiResponses.Streams().Stream(
+            CreateModel(),
+            CreateContext(),
+            new StreamOptions
+            {
+                ApiKey = "test-key",
+                Fetch = fetch.Fetch,
+                CancellationToken = cts.Token,
+            }));
+
+        Assert.Equal("Bearer test-key", fetch.Requests[0].Headers["authorization"]);
+        Assert.Null(events.OfType<AssistantMessageEvent.Error>().FirstOrDefault());
+        Assert.Equal(StopReason.Stop, Assert.IsType<AssistantMessageEvent.Done>(events[^1]).Reason);
+    }
+
     /// <summary>自建 IFetchResponse：给协议测试一个可替换 Body 的响应替身。</summary>
     private sealed class TestFetchResponse : IFetchResponse
     {

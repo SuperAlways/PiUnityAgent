@@ -96,6 +96,42 @@ public static class OpenAiResponses
         SimpleStreamOptions? options = null)
         => Run(model, context, BuildSimpleOptions(model, context, options));
 
+    /// <summary>
+    /// 基类 <see cref="StreamOptions"/>（门面 <c>Models.Stream</c> 经 applyAuth 产出）升格为本协议专属选项：
+    /// 逐字段显式拷贝全部基类字段（ApiKey/Fetch/CancellationToken/Headers/hooks…），协议专属字段保持 null。
+    /// 已是 <see cref="OpenAiResponsesOptions"/> 则原样返回；直转丢失认证正是本方法的由来。
+    /// </summary>
+    private static OpenAiResponsesOptions? ToOpenAiResponsesOptions(StreamOptions? options)
+    {
+        if (options is null) return null;
+        if (options is OpenAiResponsesOptions responses) return responses;
+        return new OpenAiResponsesOptions
+        {
+            ApiKey = options.ApiKey,
+            MaxTokens = options.MaxTokens,
+            Temperature = options.Temperature,
+            SessionId = options.SessionId,
+            Headers = options.Headers,
+            SamplingParams = options.SamplingParams,
+            TimeoutMs = options.TimeoutMs,
+            MaxRetries = options.MaxRetries,
+            MaxRetryDelayMs = options.MaxRetryDelayMs,
+            CancellationToken = options.CancellationToken,
+            Fetch = options.Fetch,
+            Identity = options.Identity,
+            Metadata = options.Metadata,
+            Env = options.Env,
+            CacheRetention = options.CacheRetention,
+            Transport = options.Transport,
+            WebsocketConnectTimeoutMs = options.WebsocketConnectTimeoutMs,
+            Telemetry = options.Telemetry,
+            TransformHeaders = options.TransformHeaders,
+            OnPayload = options.OnPayload,
+            OnResponse = options.OnResponse,
+            OnProviderStreamEvent = options.OnProviderStreamEvent,
+        };
+    }
+
     // ---------------------------------------------------------------------
     // stream（pi openai-responses.ts 154–273 的 IIFE 形态）
     // ---------------------------------------------------------------------
@@ -106,7 +142,7 @@ public static class OpenAiResponses
         var compat = GetCompat(model);
         var normalizedContext = ResolveTranscript(context, compat.SupportsMidConvoSystemMessages);
 
-        _ = RunCoreAsync(stream, model, normalizedContext, options, compat);
+        _ = RunCoreAsync(stream, model, normalizedContext, ToOpenAiResponsesOptions(options), compat);
         return stream;
     }
 
