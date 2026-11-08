@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | 原版 pi | `v1.5.0` | `f9a263655` | 2026-11-02 | 已同步；v1.3.0 → v1.5.0 共 389 commits |
 | Pi.NET | `main`（无新 tag，最新 tag `v1.4.5`） | `2d6757b` | 2026-11-05 | `v1.4.5` 之后 40 commits；其 docs 对齐上游 v1.5.0 |
-| UnityLlmTransport | Phase 2 终审 | `87db637` | 2026-11-07 | 通讯底座；B 方案下由 Host 适配器消费；四版本 × Mono/IL2CPP 8 组 15/15（含 2022.3.62f3c1 测试主基线） |
+| UnityLlmTransport | Phase 0–6 完成（`VERSION 0.6.0`） | `4c0cc4b` | 2026-11-08 | 通讯底座；B 方案下由 Host 适配器消费；UWR/HttpClient/WebSocket/Auth/SSE/Abstractions；Phase 2 四版本 × Mono/IL2CPP 8 组 15/15（含 2022.3.62f3c1）；正式打包另行评估 |
 
 **上游增量（v1.3.0 → v1.5.0，M1 相关）**：
 
