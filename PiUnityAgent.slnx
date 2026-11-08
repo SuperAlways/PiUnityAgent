@@ -4,6 +4,14 @@
     <Project Path="src/PiUnityAgent.Core/PiUnityAgent.Core.csproj" />
     <Project Path="src/PiUnityAgent.Runtime/PiUnityAgent.Runtime.csproj" />
   </Folder>
+  <Folder Name="/third_party/UnityLlmTransport/">
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.Abstractions/UnityLlmTransport.Abstractions.csproj" />
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.Sse/UnityLlmTransport.Sse.csproj" />
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.HttpClient/UnityLlmTransport.HttpClient.csproj" />
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.Auth/UnityLlmTransport.Auth.csproj" />
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.WebSocket/UnityLlmTransport.WebSocket.csproj" />
+    <Project Path="third_party/UnityLlmTransport/src/UnityLlmTransport.UnityWebRequest.Core/UnityLlmTransport.UnityWebRequest.Core.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PiUnityAgent.Ai.Tests/PiUnityAgent.Ai.Tests.csproj" />
     <Project Path="tests/PiUnityAgent.Core.Tests/PiUnityAgent.Core.Tests.csproj" />
