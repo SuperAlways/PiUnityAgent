@@ -38,7 +38,9 @@ internal static class ProviderRetry
     /// <summary>
     /// 判定一条 <see cref="FetchException"/> 是否可重试：x-should-retry 头最权威
     /// （true 强制重试、false 禁止）；随后看传输层 <c>IsRetryable</c> 标记；
-    /// 无状态码（连接层失败）重试；408/409/429/5xx 重试；其余不重试。
+    /// 无状态码仅在连接建立失败（<see cref="FetchErrorKind.Connect"/>）时重试
+    /// （TLS/代理/协议等无状态错误是永久性配置问题，不重试）；
+    /// 408/409/429/5xx 重试；其余不重试。
     /// </summary>
     public static bool ShouldRetry(FetchException error)
     {
@@ -51,7 +53,7 @@ internal static class ProviderRetry
         }
 
         if (error.IsRetryable) return true;
-        if (error.StatusCode is null) return true;
+        if (error.StatusCode is null) return error.Kind == FetchErrorKind.Connect;
 
         var status = error.StatusCode.Value;
         return status is 408 or 409 or 429 || status >= 500;

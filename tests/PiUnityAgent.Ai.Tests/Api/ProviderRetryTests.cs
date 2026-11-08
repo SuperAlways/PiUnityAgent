@@ -14,13 +14,14 @@ public class ProviderRetryTests
         string? xShouldRetry = null,
         bool isRetryable = false,
         string? retryAfter = null,
-        string? retryAfterMs = null)
+        string? retryAfterMs = null,
+        FetchErrorKind kind = FetchErrorKind.Protocol)
     {
         var headers = new FetchHeaders();
         if (xShouldRetry is not null) headers["x-should-retry"] = xShouldRetry;
         if (retryAfter is not null) headers["retry-after"] = retryAfter;
         if (retryAfterMs is not null) headers["retry-after-ms"] = retryAfterMs;
-        return new FetchException(FetchErrorKind.Protocol, "test error")
+        return new FetchException(kind, "test error")
         {
             StatusCode = status,
             Headers = headers,
@@ -55,9 +56,24 @@ public class ProviderRetryTests
     }
 
     [Fact]
-    public void ShouldRetry_Missing_Status_Is_Retryable()
+    public void ShouldRetry_Missing_Status_Connect_Is_Retryable()
     {
-        Assert.True(ProviderRetry.ShouldRetry(Error()));
+        // pi-ish connection fallback: 无状态码且 Kind=Connect（连接建立失败）才重试。
+        Assert.True(ProviderRetry.ShouldRetry(Error(kind: FetchErrorKind.Connect)));
+    }
+
+    [Fact]
+    public void ShouldRetry_NoStatus_Tls_NotRetryable()
+    {
+        // 传输适配器判定不可重试的 TLS 握手失败（无状态码）→ 永久性错误，不重试。
+        Assert.False(ProviderRetry.ShouldRetry(Error(kind: FetchErrorKind.Tls)));
+    }
+
+    [Fact]
+    public void ShouldRetry_NoStatus_Connect_Retries()
+    {
+        // 连接失败即使传输层未标 IsRetryable 也按连接回退重试。
+        Assert.True(ProviderRetry.ShouldRetry(Error(kind: FetchErrorKind.Connect, isRetryable: false)));
     }
 
     [Fact]
