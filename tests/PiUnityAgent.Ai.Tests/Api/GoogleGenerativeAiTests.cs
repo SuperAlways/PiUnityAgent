@@ -489,6 +489,17 @@ public class GoogleGenerativeAiTests
     }
 
     [Fact]
+    public async Task No_Tools_Sends_No_Tools_And_No_ToolConfig()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        _ = await CollectAsync(GoogleGenerativeAi.Stream(
+            CreateBudgetModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+        Assert.Null(Body(fetch)["tools"]);
+        Assert.Null(Body(fetch)["toolConfig"]);
+    }
+
+    [Fact]
     public async Task ToolResult_Output_Uses_FunctionResponse()
     {
         var fetch = new MockFetch();
