@@ -27,11 +27,11 @@
 
 ## 1. M1 · PiUnityAgent.Ai（pi-ai 子集）
 
-> **S1/S2/S3 状态（2026-11-08）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版已合 `main`；S3 对齐返工 v2（IProvider/Fetch 端口/Auth 类型/LazyStream）已合 `main`（2026-11-08）。详见 `docs/learning/S1-*`、`S2-*`、`S3-*` 与 v2 补充篇。
+> **S1/S2/S3 状态（2026-11-08）**：S1 消息/内容、S2 事件流、S3 Provider/Faux 初版已合 `main`；S3 对齐返工 v2（IProvider/Fetch 端口/Auth 类型/LazyStream）已合 `main`；S3 v3 偏离补齐（Auth 全套形状/API Key 路径/ModelsError/ProviderFactory/ClientIdentity/Observer/Options 严格化）已在 `feature/s3-v3-deviation` 完成，独立审查 PASS 后合 `main`。详见 `docs/learning/S1-*`、`S2-*`、`S3-*` 与 v2 补充篇（含 v3 段）。
 
 | 上游文件 | 我们的文件 | 状态 | 偏离说明 |
 |---|---|---|---|
-| `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 消息/内容类型、S2 事件、S3 Model/选项均已落地；S3 返工 v2 补 `FetchFunction` 端口与形状对齐 |
+| `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 消息/内容类型、S2 事件、S3 Model/选项均已落地；S3 返工 v2 补 `FetchFunction` 端口与形状对齐；v3 补 `StreamOptions.TransformHeaders/OnPayload`、`ClientIdentity`（UserAgentMode/Attribution/Version）、`ImagesOptions`/`ClassifierOptions`，删 `StreamOptions.BaseUrl/StopSequences` |
 | `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/*` | ✅ | S2 完成：12 事件 + EventStream + AssistantMessageEventStream；单消费者 |
 | `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Types/TranscriptNormalization.cs` | ✅ | `normalizeContext` 折叠 system prompt/tools；重放辅助 D11 后置 |
 | `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Reliability/Retry.cs` | ⬜ | 指数退避 + 抖动 |
@@ -41,10 +41,10 @@
 | `packages/ai/src/api/openai-completions.ts` | `src/PiUnityAgent.Ai/Api/OpenAiCompletions.cs` | ⬜ | OpenAI-compatible / DeepSeek |
 | `packages/ai/src/api/anthropic-messages.ts` | `src/PiUnityAgent.Ai/Api/AnthropicMessages.cs` | ⬜ | 保留 cache/thinking 语义 |
 | `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；Deferred 行为 D3 后置 |
-| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | 🟡 | 完整门面形状；刷新 D2、Deferred D3、图片 D4、分类 D5 后置 |
+| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | ✅ | S3 v3：门面形状补齐（ModelsError/FilterAllModels/transformHeaders/observer 挂点/CreateModelsOptions）+ API Key 认证/可用性路径；刷新 D2、Deferred D3、图片 D4、分类 D5 后置（C） |
 | `packages/ai/src/index.ts` | — | ⛔ | C# 不建 barrel |
-| `packages/ai/src/auth/**`、`oauth*.ts` | `src/PiUnityAgent.Ai/Providers/Auth/` | 🟡 | Auth 类型 + API Key 解析 + 内存 store；OAuth/持久化 D1/D7 后置 |
-| `packages/ai/src/images*`、`classify*` | `src/PiUnityAgent.Ai/Types/ImagesTypes.cs`、`ClassifierTypes.cs`、`Providers/ProviderCapabilities.cs` | 🟡 | 类型 + 能力接口 + `Models` stub；真实实现 D4/D5 后置 |
+| `packages/ai/src/auth/**`、`oauth*.ts` | `src/PiUnityAgent.Ai/Providers/Auth/` | ✅ | S3 v3 形状：ModelAuth/AuthResult（ModelAuth+Env+Source）/AuthCheck（Type 必填）/CredentialStore（Read/List/Modify/Delete；modify null=不变）/IAuthContext/ApiKeyAuth/OAuthAuth（ToAuth，无 Logout）；OAuth 行为 C 后置 D1/D7 |
+| `packages/ai/src/images*`、`classify*` | `src/PiUnityAgent.Ai/Types/ImagesTypes.cs`、`ClassifierTypes.cs`、`Providers/ProviderCapabilities.cs`、`Providers/ProviderStreams.cs` | 🟡 | 类型 + 能力接口（`IImagesProvider`/`IClassifierProvider`）+ `ProviderImages`/`ProviderClassifier` + `ImagesOptions`/`ClassifierOptions`；`Models` stub；真实实现 D4/D5 后置（C） |
 | `packages/ai/src/api/vertex-ai.ts`、`bedrock*`、`mistral*`、`google*` | — | ⛔ | 非目标 provider |
 
 ---

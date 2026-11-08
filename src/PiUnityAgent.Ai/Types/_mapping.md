@@ -50,3 +50,15 @@
 | `StreamOptions` / `SimpleStreamOptions` | `StreamOptions.cs` / `SimpleStreamOptions.cs` | 基类 + 派生 |
 | `CacheRetention` / `Transport` / `ToolChoice` | `StreamOptionTypes.cs` / `Fetch.cs` | enum + wire converter |
 | `normalizeContext` | `TranscriptNormalization.cs` | 前导 system 折叠 |
+
+## S3 v3 偏离补齐新增映射
+
+| 上游 | 我们的文件 | 说明 |
+|---|---|---|
+| `StreamOptions`（v3 修订） | `StreamOptions.cs` | 删 `BaseUrl`/`StopSequences`；增 `TransformHeaders`（Models 摘除后执行）/`OnPayload`（`JsonNode?`）；`TelemetrySpan`/`StreamOptions.Telemetry` 保留为 D8 最小壳 |
+| `SimpleStreamOptions.reasoning` | `SimpleStreamOptions.cs` | `Reasoning`（`ThinkingLevel?`）；`ToolChoice`/`Deferred`/`ThinkingBudgets` 保留 |
+| `ImagesOptions` / `ClassifierOptions` | `ImagesOptions.cs` / `ClassifierOptions.cs` | pi 独立选项面；C# 以 `: StreamOptions` 承载（B/D 登记） |
+| `SimpleStreamFn` | `StreamFn.cs` | 与 `StreamFn` 并列的独立 delegate（`ProviderStreams.StreamSimple` 用） |
+| `ClientIdentity`（UserAgentMode/ClientAttribution/Version） | `ClientIdentity.cs` | `UserAgentMode`/`ClientAttribution`/`AttributionSet`/`Version` + `ClientIdentityMerger.Merge` 逐字段合并；删除自造 `Headers` 字段 |
+
+> 注：`AuthContext`/`AuthResult`/`CredentialStore`/`ModelsStore`/`ProviderFactory`/`ModelOperations`/`LazyStreamObserver` 物理落位在 `Providers/`（含 `Providers/Auth/`）与 `Events/`，映射见 `Providers/_mapping.md`。
