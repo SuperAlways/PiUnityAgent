@@ -6,3 +6,5 @@
 | 阶段 | 日期 | 结论 | 报告 | 后续 |
 |---|---|---|---|---|
 | S3 v2 | 2026-11-08 | **FAIL**（未登记 Shape gap：Auth 类型面 + Models 门面） | [`2026-11-08-S3-v2-deviation-audit.md`](2026-11-08-S3-v2-deviation-audit.md) | 修 Shape gap 或用户批准登记为 D；修复后新审计者复核；S4 开工前清偿 |
+| S3 v3 | 2026-11-08 | **PASS_WITH_REGISTERED_DEVIATIONS**（N1–N8 均 Minor；N1/N2/N3/N8 修复，N4–N7 登记） | [`2026-11-08-S3-v3-deviation-audit.md`](2026-11-08-S3-v3-deviation-audit.md) | 修复/登记后由新独立审计者复核 |
+| S3 v3 复核 | 2026-11-08 | **PASS_WITH_REGISTERED_DEVIATIONS**（N1–N8 全核销；仅 R1 D14 锚点措辞） | [`2026-11-08-S3-v3-deviation-recheck.md`](2026-11-08-S3-v3-deviation-recheck.md) | R1 已订正；D14/S4 承接；待用户验收合并 |
