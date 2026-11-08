@@ -20,26 +20,56 @@ public sealed partial class Models
             : await ResolveAuthAsync(provider, overrides).ConfigureAwait(false);
     }
 
-    public Task<AuthResult?> GetAuthAsync(
+    public async Task<AuthResult?> GetAuthAsync(
         ProviderModel model,
         AuthResolutionOverrides? overrides = null)
-        => GetAuthAsync(model.Provider, overrides);
+    {
+        var result = await GetAuthAsync(model.Provider, overrides).ConfigureAwait(false);
+        if (result is null || model.Headers is null || model.Headers.Count == 0) return result;
+
+        // ProviderModel.Headers 是 string；ModelAuth.Headers 允许 null 抑制默认头，显式协变。
+        var modelHeaders = model.Headers.ToDictionary(
+            pair => pair.Key,
+            pair => (string?)pair.Value,
+            StringComparer.Ordinal);
+        return result with
+        {
+            Auth = result.Auth with
+            {
+                Headers = MergeHeaders(result.Auth.Headers, modelHeaders),
+            },
+        };
+    }
 
     public async Task<AuthCheck?> CheckAuthAsync(
         string providerId,
         AuthOperationOptions? options = null)
     {
+        var ct = options?.CancellationToken ?? default;
+        ct.ThrowIfCancellationRequested();
         var provider = GetProvider(providerId);
         if (provider is null) return null;
-        if (provider.Auth is null) return new AuthCheck(true);
+        var auth = provider.Auth;
+        if (auth is null) return null;
 
-        var auth = await GetAuthAsync(providerId).ConfigureAwait(false);
-        return auth?.Credential switch
+        var credential = await ReadCredentialAsync(providerId, ct).ConfigureAwait(false);
+        if (credential is OAuthCredential)
         {
-            ApiKeyCredential => new AuthCheck(true, AuthType.ApiKey),
-            OAuthCredential => new AuthCheck(true, AuthType.OAuth),
-            _ => null,
-        };
+            return auth.OAuth is not null
+                ? new AuthCheck(AuthType.OAuth, "OAuth")
+                : null;
+        }
+
+        var apiKey = auth.ApiKey;
+        if (apiKey is null) return null;
+        if (apiKey.Check is not null)
+        {
+            return await CheckApiKeyAsync(provider.Id, apiKey, credential as ApiKeyCredential, ct).ConfigureAwait(false);
+        }
+
+        var result = await ResolveAuthAsync(provider, new AuthResolutionOverrides { Signal = ct })
+            .ConfigureAwait(false);
+        return result is null ? null : new AuthCheck(AuthType.ApiKey, result.Source);
     }
 
     public async Task<IReadOnlyList<Model>> GetAvailableAsync(
@@ -49,21 +79,20 @@ public sealed partial class Models
         var result = new List<Model>();
         foreach (var entry in SelectProviders(provider))
         {
-            if (!await IsAvailableAsync(entry, options).ConfigureAwait(false)) continue;
+            if (await CheckAuthAsync(entry.Id, options).ConfigureAwait(false) is null) continue;
 
-            var credential = (await GetAuthAsync(entry.Id).ConfigureAwait(false))?.Credential;
+            var credential = await ReadCredentialAsync(
+                entry.Id, options?.CancellationToken ?? default).ConfigureAwait(false);
             var models = SafeChatModels(entry);
             if (entry is IRefreshableProvider refreshable)
             {
-                models = refreshable
-                    .FilterModels(models.Cast<ProviderModel>().ToList(), credential)
+                models = refreshable.FilterModels(
+                    models.Cast<ProviderModel>().ToList(), credential)
                     .OfType<Model>()
                     .ToList();
             }
-
             result.AddRange(models);
         }
-
         return result;
     }
 
@@ -75,18 +104,9 @@ public sealed partial class Models
         var result = new List<ProviderModel>();
         foreach (var entry in SelectProviders(provider))
         {
-            if (!await IsAvailableAsync(entry, options).ConfigureAwait(false)) continue;
-
-            var credential = (await GetAuthAsync(entry.Id).ConfigureAwait(false))?.Credential;
-            var models = SafeAllModels(entry);
-            if (entry is IRefreshableProvider refreshable)
-            {
-                models = refreshable.FilterModels(models, credential);
-            }
-
-            result.AddRange(models.Where(model => model.Type == type));
+            result.AddRange((await GetAvailableAllAsync(entry, options).ConfigureAwait(false))
+                .Where(model => model.Type == type));
         }
-
         return result;
     }
 
@@ -97,27 +117,31 @@ public sealed partial class Models
         var result = new List<ProviderModel>();
         foreach (var entry in SelectProviders(provider))
         {
-            if (!await IsAvailableAsync(entry, options).ConfigureAwait(false)) continue;
-
-            var credential = (await GetAuthAsync(entry.Id).ConfigureAwait(false))?.Credential;
-            var models = SafeAllModels(entry);
-            if (entry is IRefreshableProvider refreshable)
-            {
-                models = refreshable.FilterModels(models, credential);
-            }
-
-            result.AddRange(models);
+            result.AddRange(await GetAvailableAllAsync(entry, options).ConfigureAwait(false));
         }
-
         return result;
+    }
+
+    private async Task<IReadOnlyList<ProviderModel>> GetAvailableAllAsync(
+        IProvider entry,
+        AuthOperationOptions? options)
+    {
+        if (await CheckAuthAsync(entry.Id, options).ConfigureAwait(false) is null)
+            return Array.Empty<ProviderModel>();
+
+        var credential = await ReadCredentialAsync(
+            entry.Id, options?.CancellationToken ?? default).ConfigureAwait(false);
+        var all = SafeAllModels(entry);
+        // Task 1 仍用旧 IRefreshableProvider.FilterModels；Task 3 切换 IFilterableProvider/FilterAllModels。
+        return entry is IRefreshableProvider refreshable
+            ? refreshable.FilterModels(all, credential)
+            : all;
     }
 
     public Task<ModelsRefreshResult> RefreshAsync(ModelsRefreshOptions? options = null)
     {
         // TODO(S4, D2): 动态模型目录刷新。
-        return Task.FromResult(new ModelsRefreshResult(
-            false,
-            new Dictionary<string, Exception>()));
+        return Task.FromResult(new ModelsRefreshResult(false, new Dictionary<string, Exception>()));
     }
 
     public Task<Credential> LoginAsync(
@@ -125,61 +149,146 @@ public sealed partial class Models
         AuthType type,
         AuthInteraction interaction,
         LoginOptions? options = null)
-        => throw new NotSupportedException(
-            "Deferred to S5: interactive login (D1)");
+        => throw new NotSupportedException("Deferred to S5: interactive login (D1)");
 
-    public async Task LogoutAsync(
-        string providerId,
-        AuthOperationOptions? options = null)
+    public async Task LogoutAsync(string providerId, AuthOperationOptions? options = null)
     {
-        var provider = GetProvider(providerId)
-            ?? throw new InvalidOperationException($"Unknown provider: {providerId}");
-
-        if (provider.Auth?.OAuth?.Logout is not null)
+        if (GetProvider(providerId) is null)
+            throw new ModelsError(ModelsErrorCode.Provider, $"Unknown provider: {providerId}");
+        try
         {
-            await provider.Auth.OAuth.Logout(providerId, default).ConfigureAwait(false);
+            await _credentials.DeleteAsync(providerId, options).ConfigureAwait(false);
         }
-
-        await _credentials.DeleteAsync(providerId).ConfigureAwait(false);
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"Credential store delete failed for {providerId}", error);
+        }
     }
 
     private async Task<AuthResult?> ResolveAuthAsync(
         IProvider provider,
         AuthResolutionOverrides? overrides)
     {
-        if (overrides?.Credential is not null)
+        var ct = overrides?.Signal ?? default;
+        ct.ThrowIfCancellationRequested();
+        var auth = provider.Auth;
+        if (auth is null) return null;
+
+        // 1. 显式 apiKey 只在 provider 支持 api-key 时走 provider Resolve；合成凭据带 Env。
+        if (!string.IsNullOrEmpty(overrides?.ApiKey) && auth.ApiKey is not null)
         {
-            return new AuthResult(overrides.Credential, "options");
+            var synthetic = new ApiKeyCredential(overrides.ApiKey) { Env = overrides.Env };
+            return await ResolveApiKeyAsync(provider, synthetic, ct, overrides.Env).ConfigureAwait(false);
         }
 
-        if (!string.IsNullOrEmpty(overrides?.ApiKey))
-        {
-            return new AuthResult(new ApiKeyCredential(overrides.ApiKey), "options");
-        }
-
-        var stored = await _credentials.GetAsync(provider.Id).ConfigureAwait(false);
-        if (stored is ApiKeyCredential apiKey && !string.IsNullOrEmpty(apiKey.Key))
-        {
-            return new AuthResult(apiKey, "store");
-        }
-
+        // 2. stored credential owns provider。
+        var stored = await ReadCredentialAsync(provider.Id, ct).ConfigureAwait(false);
         if (stored is OAuthCredential oauth)
         {
-            // TODO(S5, D1): OAuth 刷新/派生请求认证。
-            return new AuthResult(oauth, "store");
-        }
-
-        var resolve = provider.Auth?.ApiKey?.Resolve;
-        if (resolve is not null)
-        {
-            var key = await resolve(_authContext, null, default).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(key))
+            if (auth.OAuth?.ToAuth is null) return null;
+            try
             {
-                return new AuthResult(new ApiKeyCredential(key), "provider");
+                var modelAuth = await auth.OAuth.ToAuth(oauth, ct).ConfigureAwait(false);
+                return new AuthResult(modelAuth, null, "OAuth"); // OAuth Extra→env 随 D1/S5
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                throw new ModelsError(ModelsErrorCode.OAuth,
+                    $"OAuth auth derivation failed for provider {provider.Id}", error);
             }
         }
 
-        return null;
+        if (stored is ApiKeyCredential apiKey)
+        {
+            if (auth.ApiKey is null) return null;
+            var env = MergeEnv(apiKey.Env, overrides?.Env);
+            var credential = env is null ? apiKey : apiKey with { Env = env };
+            return await ResolveApiKeyAsync(provider, credential, ct, overrides?.Env).ConfigureAwait(false);
+        }
+
+        // stored 类型无匹配：不回落 ambient。
+        if (stored is not null) return null;
+        if (auth.ApiKey is null) return null;
+
+        // 3. 仅无 stored 时走 ambient。
+        return await ResolveApiKeyAsync(provider, null, ct, overrides?.Env).ConfigureAwait(false);
+    }
+
+    private async Task<AuthResult?> ResolveApiKeyAsync(
+        IProvider provider,
+        ApiKeyCredential? credential,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? overrideEnv = null)
+    {
+        var apiKey = provider.Auth?.ApiKey
+            ?? throw new ModelsError(ModelsErrorCode.Provider,
+                $"Provider {provider.Id} has no api-key auth");
+        var context = overrideEnv is { Count: > 0 }
+            ? new OverlayAuthContext(_authContext, overrideEnv)
+            : _authContext;
+        try
+        {
+            return await apiKey.Resolve(new ApiKeyResolveInput(context, credential), ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"API key auth failed for provider {provider.Id}", error);
+        }
+    }
+
+    private async Task<AuthCheck?> CheckApiKeyAsync(
+        string providerId,
+        ApiKeyAuth apiKey,
+        ApiKeyCredential? credential,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await apiKey.Check!(new ApiKeyCheckInput(_authContext, credential), ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"API key auth check failed for {providerId}", error);
+        }
+    }
+
+    private async Task<Credential?> ReadCredentialAsync(string providerId, CancellationToken ct)
+    {
+        try
+        {
+            return await _credentials.ReadAsync(
+                providerId, new AuthOperationOptions { CancellationToken = ct }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"Credential store read failed for {providerId}", error);
+        }
     }
 
     private IReadOnlyList<IProvider> SelectProviders(string? providerId)
@@ -189,12 +298,23 @@ public sealed partial class Models
                 ? new[] { provider }
                 : Array.Empty<IProvider>();
 
-    private async Task<bool> IsAvailableAsync(
-        IProvider provider,
-        AuthOperationOptions? options)
+    private sealed class OverlayAuthContext : IAuthContext
     {
-        if (provider.Auth is null) return true;
-        var check = await CheckAuthAsync(provider.Id, options).ConfigureAwait(false);
-        return check?.Configured == true;
+        private readonly IAuthContext _base;
+        private readonly IReadOnlyDictionary<string, string> _env;
+
+        public OverlayAuthContext(IAuthContext @base, IReadOnlyDictionary<string, string> env)
+        {
+            _base = @base;
+            _env = env;
+        }
+
+        public async Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
+            => _env.TryGetValue(name, out var value)
+                ? value
+                : await _base.EnvAsync(name, cancellationToken).ConfigureAwait(false);
+
+        public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
+            => _base.FileExistsAsync(path, cancellationToken);
     }
 }

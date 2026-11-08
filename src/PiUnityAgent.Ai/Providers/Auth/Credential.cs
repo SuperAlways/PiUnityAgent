@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -7,32 +9,54 @@ namespace PiUnityAgent.Ai.Providers.Auth;
 
 public abstract record Credential;
 
-public sealed record ApiKeyCredential(string Key) : Credential;
+public sealed record ApiKeyCredential(string? Key = null) : Credential
+{
+    public IReadOnlyDictionary<string, string>? Env { get; init; }
+}
 
 public sealed record OAuthCredential : Credential
 {
+    public required string RefreshToken { get; init; }
     public required string AccessToken { get; init; }
-    public string? RefreshToken { get; init; }
-    public long? ExpiresAt { get; init; }
+    public required long ExpiresAt { get; init; }
+    public IReadOnlyDictionary<string, JsonNode?>? Extra { get; init; }
 }
 
-public sealed record CredentialInfo(AuthType Type, string? Source = null);
+public sealed record CredentialInfo(string ProviderId, AuthType Type);
 
 public interface CredentialStore
 {
-    Task<Credential?> GetAsync(string providerId, CancellationToken ct = default);
-    Task SetAsync(string providerId, Credential credential, CancellationToken ct = default);
-    Task DeleteAsync(string providerId, CancellationToken ct = default);
+    Task<Credential?> ReadAsync(string providerId, AuthOperationOptions? options = null);
+    Task<IReadOnlyList<CredentialInfo>> ListAsync(AuthOperationOptions? options = null);
+    Task<Credential?> ModifyAsync(
+        string providerId,
+        Func<Credential?, Task<Credential?>> modify,
+        AuthOperationOptions? options = null);
+    Task DeleteAsync(string providerId, AuthOperationOptions? options = null);
 }
 
 public sealed class InMemoryCredentialStore : CredentialStore
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Credential> _credentials = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
 
-    public Task<Credential?> GetAsync(string providerId, CancellationToken ct = default)
+    private SemaphoreSlim LockFor(string providerId)
     {
-        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (!_locks.TryGetValue(providerId, out var gate))
+            {
+                gate = new SemaphoreSlim(1, 1);
+                _locks[providerId] = gate;
+            }
+            return gate;
+        }
+    }
+
+    public Task<Credential?> ReadAsync(string providerId, AuthOperationOptions? options = null)
+    {
+        ThrowIfCancelled(options);
         lock (_gate)
         {
             return Task.FromResult<Credential?>(
@@ -40,18 +64,66 @@ public sealed class InMemoryCredentialStore : CredentialStore
         }
     }
 
-    public Task SetAsync(string providerId, Credential credential, CancellationToken ct = default)
+    public Task<IReadOnlyList<CredentialInfo>> ListAsync(AuthOperationOptions? options = null)
     {
-        ct.ThrowIfCancellationRequested();
-        if (credential is null) throw new ArgumentNullException(nameof(credential));
-        lock (_gate) _credentials[providerId] = credential;
-        return Task.CompletedTask;
+        ThrowIfCancelled(options);
+        lock (_gate)
+        {
+            return Task.FromResult<IReadOnlyList<CredentialInfo>>(
+                _credentials.Select(entry => new CredentialInfo(
+                    entry.Key,
+                    entry.Value is OAuthCredential ? AuthType.OAuth : AuthType.ApiKey)).ToList());
+        }
     }
 
-    public Task DeleteAsync(string providerId, CancellationToken ct = default)
+    public async Task<Credential?> ModifyAsync(
+        string providerId,
+        Func<Credential?, Task<Credential?>> modify,
+        AuthOperationOptions? options = null)
     {
-        ct.ThrowIfCancellationRequested();
-        lock (_gate) _credentials.Remove(providerId);
-        return Task.CompletedTask;
+        ThrowIfCancelled(options);
+        if (modify is null) throw new ArgumentNullException(nameof(modify));
+
+        var gate = LockFor(providerId);
+        await gate.WaitAsync(options?.CancellationToken ?? default).ConfigureAwait(false);
+        try
+        {
+            ThrowIfCancelled(options);
+            Credential? current;
+            lock (_gate) _credentials.TryGetValue(providerId, out current);
+
+            var next = await modify(current).ConfigureAwait(false);
+            ThrowIfCancelled(options);
+            if (next is not null)
+            {
+                lock (_gate) _credentials[providerId] = next;
+                return next;
+            }
+
+            return current;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    public async Task DeleteAsync(string providerId, AuthOperationOptions? options = null)
+    {
+        ThrowIfCancelled(options);
+        var gate = LockFor(providerId);
+        await gate.WaitAsync(options?.CancellationToken ?? default).ConfigureAwait(false);
+        try
+        {
+            ThrowIfCancelled(options);
+            lock (_gate) _credentials.Remove(providerId);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static void ThrowIfCancelled(AuthOperationOptions? options)
+        => options?.CancellationToken.ThrowIfCancellationRequested();
 }

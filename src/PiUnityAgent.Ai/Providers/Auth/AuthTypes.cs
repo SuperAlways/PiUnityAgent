@@ -2,15 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace PiUnityAgent.Ai.Providers.Auth;
 
 [JsonConverter(typeof(AuthTypeJsonConverter))]
-public enum AuthType
-{
-    ApiKey,
-    OAuth
-}
+public enum AuthType { ApiKey, OAuth }
 
 public sealed record ModelAuth
 {
@@ -19,23 +16,24 @@ public sealed record ModelAuth
     public string? BaseUrl { get; init; }
 }
 
-public sealed record AuthResult(Credential Credential, string? Source = null);
+public sealed record AuthResult(
+    ModelAuth Auth,
+    IReadOnlyDictionary<string, string>? Env = null,
+    string? Source = null);
 
-public sealed record AuthCheck(bool Configured, AuthType? Type = null);
+public sealed record AuthCheck(AuthType Type, string? Source = null);
 
 public sealed record AuthOperationOptions
 {
+    public CancellationToken CancellationToken { get; init; }
 }
 
 public sealed record AuthResolutionOverrides
 {
     public string? ApiKey { get; init; }
-    public Credential? Credential { get; init; }
-}
-
-public sealed record AuthContext
-{
     public IReadOnlyDictionary<string, string>? Env { get; init; }
+    public long? MinOAuthValidityMs { get; init; }
+    public CancellationToken Signal { get; init; }
 }
 
 public sealed record AuthInfoLink(string Url, string? Label = null);
@@ -48,10 +46,7 @@ public sealed record LoginOptions
 
 public sealed class AuthTypeJsonConverter : JsonConverter<AuthType>
 {
-    public override AuthType Read(
-        ref Utf8JsonReader reader,
-        Type typeToConvert,
-        JsonSerializerOptions options)
+    public override AuthType Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         => reader.GetString() switch
         {
             "api_key" => AuthType.ApiKey,
@@ -59,10 +54,7 @@ public sealed class AuthTypeJsonConverter : JsonConverter<AuthType>
             var value => throw new JsonException($"Unknown auth type: {value}")
         };
 
-    public override void Write(
-        Utf8JsonWriter writer,
-        AuthType value,
-        JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, AuthType value, JsonSerializerOptions options)
         => writer.WriteStringValue(value switch
         {
             AuthType.ApiKey => "api_key",

@@ -60,7 +60,7 @@ public interface AuthInteraction
     void Notify(AuthEvent @event);
 }
 
-public sealed class ProviderAuthInteraction
+public sealed class ProviderAuthInteraction : AuthInteraction
 {
     public ProviderAuthInteraction(AuthInteraction interaction, CancellationToken cancellationToken)
     {
@@ -71,10 +71,14 @@ public sealed class ProviderAuthInteraction
     public AuthInteraction Interaction { get; }
     public CancellationToken CancellationToken { get; }
 
-    public Task<string> PromptAsync(AuthPrompt prompt, CancellationToken cancellationToken = default)
-        => Interaction.PromptAsync(prompt, cancellationToken.CanBeCanceled
-            ? cancellationToken
-            : CancellationToken);
+    public async Task<string> PromptAsync(AuthPrompt prompt, CancellationToken cancellationToken = default)
+    {
+        var lifetime = CancellationToken;
+        if (!lifetime.CanBeCanceled) return await Interaction.PromptAsync(prompt, cancellationToken).ConfigureAwait(false);
+        if (!cancellationToken.CanBeCanceled) return await Interaction.PromptAsync(prompt, lifetime).ConfigureAwait(false);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lifetime, cancellationToken);
+        return await Interaction.PromptAsync(prompt, linked.Token).ConfigureAwait(false);
+    }
 
     public void Notify(AuthEvent @event) => Interaction.Notify(@event);
 }

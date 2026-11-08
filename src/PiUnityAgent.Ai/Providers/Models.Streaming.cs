@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using PiUnityAgent.Ai.Events;
@@ -18,13 +20,11 @@ public sealed partial class Models
         return LazyStream.Run(model, async () =>
         {
             var provider = RequireProvider(model.Provider);
-            var key = await ResolveApiKeyAsync(provider, options?.ApiKey).ConfigureAwait(false);
-            if (key is not null)
-            {
-                options = (options ?? new StreamOptions()) with { ApiKey = key };
-            }
-
-            return provider.Stream(model, transcript, options);
+            var ct = options?.CancellationToken ?? default;
+            var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
+            options = ApplyAuthOptions(options, auth);
+            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
+            return provider.Stream(requestModel, transcript, options);
         });
     }
 
@@ -44,13 +44,11 @@ public sealed partial class Models
         return LazyStream.Run(model, async () =>
         {
             var provider = RequireProvider(model.Provider);
-            var key = await ResolveApiKeyAsync(provider, options?.ApiKey).ConfigureAwait(false);
-            if (key is not null)
-            {
-                options = (options ?? new SimpleStreamOptions()) with { ApiKey = key };
-            }
-
-            return provider.StreamSimple(model, transcript, options);
+            var ct = options?.CancellationToken ?? default;
+            var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
+            options = ApplyAuthOptions(options, auth);
+            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
+            return provider.StreamSimple(requestModel, transcript, options);
         });
     }
 
@@ -65,18 +63,76 @@ public sealed partial class Models
         => GetProvider(providerId)
            ?? throw new InvalidOperationException($"Unknown provider: {providerId}");
 
-    private async Task<string?> ResolveApiKeyAsync(IProvider provider, string? suppliedKey)
+    private async Task<AuthResult> ResolveAuthForStreamAsync(
+        Model model, string? suppliedKey, CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(suppliedKey)) return null;
-        if (provider.Auth?.ApiKey is null) return null;
-
-        var auth = await GetAuthAsync(provider.Id).ConfigureAwait(false);
-        if (auth?.Credential is ApiKeyCredential apiKey && !string.IsNullOrEmpty(apiKey.Key))
+        var auth = await GetAuthAsync((ProviderModel)model, new AuthResolutionOverrides
         {
-            return apiKey.Key;
-        }
+            ApiKey = suppliedKey,
+            Signal = ct,
+        }).ConfigureAwait(false);
+        if (auth is null)
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"Authentication not configured for provider: {model.Provider}");
+        return auth;
+    }
 
-        throw new InvalidOperationException(
-            $"Authentication not configured for provider: {provider.Id}");
+    private static StreamOptions ApplyAuthOptions(StreamOptions? options, AuthResult auth)
+    {
+        options ??= new StreamOptions();
+        var headers = MergeHeaders(auth.Auth.Headers, options.Headers);
+        var env = MergeEnv(auth.Env, options.Env);
+        return options with
+        {
+            ApiKey = string.IsNullOrEmpty(options.ApiKey) ? auth.Auth.ApiKey : options.ApiKey,
+            Headers = headers,
+            Env = env,
+        };
+    }
+
+    private static SimpleStreamOptions ApplyAuthOptions(SimpleStreamOptions? options, AuthResult auth)
+    {
+        options ??= new SimpleStreamOptions();
+        var headers = MergeHeaders(auth.Auth.Headers, options.Headers);
+        var env = MergeEnv(auth.Env, options.Env);
+        return options with
+        {
+            ApiKey = string.IsNullOrEmpty(options.ApiKey) ? auth.Auth.ApiKey : options.ApiKey,
+            Headers = headers,
+            Env = env,
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string?>? MergeHeaders(
+        IReadOnlyDictionary<string, string?>? provider,
+        IReadOnlyDictionary<string, string?>? request)
+    {
+        if (provider is null && request is null) return null;
+        var merged = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (provider is not null)
+            foreach (var entry in provider) merged[entry.Key] = entry.Value;
+        if (request is not null)
+        {
+            foreach (var entry in request)
+            {
+                foreach (var existing in merged.Keys.ToList())
+                {
+                    if (string.Equals(existing, entry.Key, StringComparison.OrdinalIgnoreCase))
+                        merged.Remove(existing);
+                }
+                merged[entry.Key] = entry.Value;
+            }
+        }
+        return merged;
+    }
+
+    private static IReadOnlyDictionary<string, string>? MergeEnv(
+        IReadOnlyDictionary<string, string>? provider,
+        IReadOnlyDictionary<string, string>? request)
+    {
+        if (provider is null && request is null) return null;
+        var merged = new Dictionary<string, string>(provider ?? new Dictionary<string, string>());
+        if (request is not null) foreach (var entry in request) merged[entry.Key] = entry.Value;
+        return merged;
     }
 }

@@ -52,7 +52,19 @@ internal static class ProviderTestSupport
             stream ?? DoneStream,
             baseUrl ?? "http://localhost:0",
             headers,
-            auth);
+            auth ?? KeylessAuth());
+
+    /// <summary>Keyless 默认认证：无凭据也能通过（对齐 pi faux/测试 provider 恒带 auth 的约定）。</summary>
+    public static ProviderAuth KeylessAuth()
+        => new()
+        {
+            ApiKey = new ApiKeyAuth
+            {
+                Name = "test",
+                Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                    new AuthResult(new ModelAuth(), null, "test")),
+            },
+        };
 
     public static async Task<List<AssistantMessageEvent>> CollectAsync(
         IAssistantMessageEventStream stream,

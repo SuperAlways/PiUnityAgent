@@ -1,5 +1,7 @@
+using System.Threading.Tasks;
 using System.Text.Json.Nodes;
 using PiUnityAgent.Ai.Events;
+using PiUnityAgent.Ai.Providers.Auth;
 using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Providers;
@@ -47,7 +49,15 @@ public sealed class FauxProvider
             _options.Provider,
             Models,
             Stream,
-            baseUrl: Faux.DefaultBaseUrl);
+            baseUrl: Faux.DefaultBaseUrl,
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "Faux",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(new AuthResult(new ModelAuth(), null, "Faux")),
+                },
+            });
     }
 
     public IProvider Provider { get; }

@@ -7,171 +7,149 @@ namespace PiUnityAgent.Ai.Tests.Providers.Auth;
 public class AuthShapeTests
 {
     [Fact]
-    public async Task InMemoryCredentialStore_RoundTrips_And_Deletes()
+    public async Task InMemoryCredentialStore_Reads_Lists_Modifies_And_Deletes()
     {
         var store = new InMemoryCredentialStore();
-        await store.SetAsync("p1", new ApiKeyCredential("key-1"));
-        var loaded = await store.GetAsync("p1");
+        await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
+            new ApiKeyCredential("key-1") { Env = new Dictionary<string, string> { ["REGION"] = "cn" } }));
 
-        var apiKey = Assert.IsType<ApiKeyCredential>(loaded);
-        Assert.Equal("key-1", apiKey.Key);
+        var loaded = Assert.IsType<ApiKeyCredential>(await store.ReadAsync("p1"));
+        Assert.Equal("key-1", loaded.Key);
+        Assert.Equal("cn", loaded.Env!["REGION"]);
+
+        var listed = await store.ListAsync();
+        Assert.Single(listed);
+        Assert.Equal("p1", listed[0].ProviderId);
+        Assert.Equal(AuthType.ApiKey, listed[0].Type);
+
+        await store.ModifyAsync("p1", current =>
+        {
+            var key = Assert.IsType<ApiKeyCredential>(current);
+            return Task.FromResult<Credential?>(key with { Key = "key-2" });
+        });
+        Assert.Equal("key-2", Assert.IsType<ApiKeyCredential>(await store.ReadAsync("p1")).Key);
 
         await store.DeleteAsync("p1");
-        Assert.Null(await store.GetAsync("p1"));
+        Assert.Null(await store.ReadAsync("p1"));
+        Assert.Empty(await store.ListAsync());
     }
 
     [Fact]
-    public void Credential_Variants_And_AuthResults_Are_Present()
+    public async Task Modify_With_Null_Leaves_Entry_And_Returns_Current()
     {
-        var apiKey = new ApiKeyCredential("key");
-        var oauth = new OAuthCredential
-        {
-            AccessToken = "access",
-            RefreshToken = "refresh",
-            ExpiresAt = 123456789,
-        };
-        var result = new AuthResult(oauth, "OAuth");
-        var check = new AuthCheck(true, AuthType.OAuth);
-        var info = new CredentialInfo(AuthType.ApiKey, "env");
+        var store = new InMemoryCredentialStore();
+        await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
+            new ApiKeyCredential("key-1")));
 
-        Assert.Equal("key", apiKey.Key);
-        Assert.Equal("access", oauth.AccessToken);
-        Assert.Same(oauth, result.Credential);
-        Assert.Equal("OAuth", result.Source);
-        Assert.True(check.Configured);
-        Assert.Equal(AuthType.OAuth, check.Type);
-        Assert.Equal(AuthType.ApiKey, info.Type);
+        var afterNull = await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(null));
+
+        Assert.Equal("key-1", Assert.IsType<ApiKeyCredential>(afterNull).Key);
+        Assert.Equal("key-1", Assert.IsType<ApiKeyCredential>(await store.ReadAsync("p1")).Key);
     }
 
     [Fact]
-    public void AuthPrompt_And_AuthEvent_Variants_Are_Present()
+    public async Task Modify_Is_Serialized_Per_Provider()
     {
-        var text = new AuthPrompt.Text { Message = "Enter key" };
-        var secret = new AuthPrompt.Secret { Message = "Secret" };
-        var select = new AuthPrompt.Select
-        {
-            Message = "Choose",
-            Options = new[]
-            {
-                new AuthPromptOption("api_key", "API key"),
-            },
-        };
-        var manual = new AuthPrompt.ManualCode { Message = "Code" };
-        var info = new AuthEvent.Info("hello", new[] { new AuthInfoLink("https://example.test") });
-        var url = new AuthEvent.AuthUrl("https://example.test/auth");
-        var device = new AuthEvent.DeviceCode("user-code", "https://example.test/device");
-        var progress = new AuthEvent.Progress("working");
+        var store = new InMemoryCredentialStore();
+        var firstStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        Assert.Equal("Enter key", text.Message);
-        Assert.Equal("Choose", select.Message);
-        Assert.Single(select.Options);
-        Assert.Equal("Code", manual.Message);
-        Assert.Single(info.Links!);
-        Assert.Equal("https://example.test/auth", url.Url);
-        Assert.Equal("user-code", device.UserCode);
-        Assert.Equal("working", progress.Message);
-        Assert.Equal("Secret", secret.Message);
+        var first = Task.Run(() => store.ModifyAsync("p1", async _ =>
+        {
+            firstStarted.SetResult(true);
+            await releaseFirst.Task;
+            return (Credential?)new ApiKeyCredential("first");
+        }));
+        await firstStarted.Task;
+        var second = Task.Run(() => store.ModifyAsync("p1", current =>
+        {
+            Assert.IsType<ApiKeyCredential>(current);
+            return Task.FromResult<Credential?>(new ApiKeyCredential("second"));
+        }));
+
+        releaseFirst.SetResult(true);
+        await first;
+        await second;
+        Assert.Equal("second", Assert.IsType<ApiKeyCredential>(await store.ReadAsync("p1")).Key);
     }
 
     [Fact]
-    public void ProviderAuth_And_Delegates_Are_Present()
+    public void AuthResult_Carries_ModelAuth_Env_And_Source()
     {
-        var api = new ApiKeyAuth
+        var result = new AuthResult(
+            new ModelAuth { ApiKey = "k", BaseUrl = "https://example.test" },
+            new Dictionary<string, string> { ["REGION"] = "cn" },
+            "store");
+        var check = new AuthCheck(AuthType.ApiKey, "store");
+
+        Assert.Equal("k", result.Auth.ApiKey);
+        Assert.Equal("cn", result.Env!["REGION"]);
+        Assert.Equal("store", result.Source);
+        Assert.Equal("store", check.Source);
+        Assert.Equal(AuthType.ApiKey, check.Type);
+    }
+
+    [Fact]
+    public async Task ApiKeyAuth_Resolve_And_Check_Are_Available()
+    {
+        var context = new TestAuthContext(new Dictionary<string, string> { ["KEY"] = "env-key" });
+        var auth = new ApiKeyAuth
         {
-            Name = "API key",
-            Resolve = (context, options, ct) =>
-                Task.FromResult<string?>(context.Env?["KEY"]),
+            Name = "test",
+            Resolve = (input, _) => Task.FromResult<AuthResult?>(new AuthResult(
+                new ModelAuth { ApiKey = input.Credential?.Key ?? "resolved" },
+                input.Credential?.Env,
+                "resolver")),
+            Check = (input, _) => Task.FromResult<AuthCheck?>(new AuthCheck(AuthType.ApiKey, "check")),
         };
-        var oauth = new OAuthAuth
+
+        var resolved = await auth.Resolve(new ApiKeyResolveInput(context, new ApiKeyCredential("override")), default);
+        var checkedAuth = await auth.Check!(new ApiKeyCheckInput(context, null), default);
+
+        Assert.Equal("override", resolved!.Auth.ApiKey);
+        Assert.Equal("resolver", resolved.Source);
+        Assert.Equal("check", checkedAuth!.Source);
+    }
+
+    [Fact]
+    public async Task OAuthAuth_Has_ToAuth_And_No_Logout()
+    {
+        var auth = new OAuthAuth
         {
-            Name = "OAuth",
-            IsSubscription = true,
-            LoginLabel = "Sign in",
-            Login = (options, interaction, ct) =>
-                Task.FromResult<Credential>(new OAuthCredential { AccessToken = "a" }),
+            Name = "oauth",
+            ToAuth = (credential, ct) => Task.FromResult(new ModelAuth { ApiKey = credential.AccessToken }),
+            Login = (interaction, options, ct) => Task.FromResult(new OAuthCredential { RefreshToken = "r", AccessToken = "a", ExpiresAt = 0 }),
             Refresh = (credential, ct) => Task.FromResult(credential),
-            Logout = (providerId, ct) => Task.CompletedTask,
         };
-        var auth = new ProviderAuth { ApiKey = api, OAuth = oauth };
 
-        Assert.Same(api, auth.ApiKey);
-        Assert.Same(oauth, auth.OAuth);
-        Assert.NotNull(api.Resolve);
-        Assert.NotNull(oauth.Login);
+        Assert.Equal("a", (await auth.ToAuth(new OAuthCredential { RefreshToken = "r", AccessToken = "a", ExpiresAt = 0 }, default)).ApiKey);
+        Assert.NotNull(auth.Login);
     }
 
     [Fact]
-    public async Task AuthInteraction_And_ProviderWrapper_Are_Present()
+    public async Task DefaultAuthContext_Reads_Environment_And_Files()
     {
-        var interaction = new RecordingInteraction();
-        var wrapper = new ProviderAuthInteraction(interaction, CancellationToken.None);
-        var prompt = new AuthPrompt.Text { Message = "Enter" };
-
-        var answer = await wrapper.PromptAsync(prompt);
-        Assert.Equal("answer", answer);
-
-        var evt = new AuthEvent.Progress("ok");
-        wrapper.Notify(evt);
-        Assert.Same(evt, interaction.LastEvent);
+        var context = new DefaultAuthContext();
+        Environment.SetEnvironmentVariable("PI_TEST_ENV", "yes");
+        try
+        {
+            Assert.Equal("yes", await context.EnvAsync("PI_TEST_ENV"));
+            Assert.True(await context.FileExistsAsync(typeof(DefaultAuthContext).Assembly.Location));
+            Assert.False(await context.FileExistsAsync("Z:/definitely/missing/file"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PI_TEST_ENV", null);
+        }
     }
 
-    [Fact]
-    public void ModelsStore_And_Refresh_Types_Are_Present()
+    private sealed class TestAuthContext : IAuthContext
     {
-        var entry = new ModelsStoreEntry
-        {
-            Provider = "p1",
-            Data = new JsonObject { ["models"] = new JsonArray() },
-            UpdatedAt = 1,
-        };
-        var publication = new ModelsPublication
-        {
-            Persist = entry,
-            Update = () => { },
-        };
-        var context = new RefreshModelsContext
-        {
-            Credential = new ApiKeyCredential("key"),
-            Stored = entry,
-            BaseUrl = "https://example.test",
-            Publish = _ => Task.FromResult(true),
-            AllowNetwork = true,
-            Force = true,
-            CancellationToken = CancellationToken.None,
-        };
-        var options = new ModelsRefreshOptions
-        {
-            AllowNetwork = false,
-            Providers = new[] { "p1" },
-            Force = false,
-            CancellationToken = CancellationToken.None,
-        };
-        var result = new ModelsRefreshResult(false, new Dictionary<string, Exception>());
-
-        Assert.Equal("p1", entry.Provider);
-        Assert.Same(entry, publication.Persist);
-        Assert.NotNull(context.Publish);
-        Assert.NotNull(options.Providers);
-        Assert.False(result.Aborted);
-        Assert.Empty(result.Errors);
-    }
-
-    [Theory]
-    [InlineData(AuthType.ApiKey, "\"api_key\"")]
-    [InlineData(AuthType.OAuth, "\"oauth\"")]
-    public void AuthType_Uses_Pi_Wire_Names(AuthType value, string wire)
-    {
-        Assert.Equal(wire, JsonSerializer.Serialize(value));
-        Assert.Equal(value, JsonSerializer.Deserialize<AuthType>(wire));
-    }
-
-    private sealed class RecordingInteraction : AuthInteraction
-    {
-        public AuthEvent? LastEvent { get; private set; }
-
-        public Task<string> PromptAsync(AuthPrompt prompt, CancellationToken cancellationToken = default)
-            => Task.FromResult("answer");
-
-        public void Notify(AuthEvent @event) => LastEvent = @event;
+        private readonly IReadOnlyDictionary<string, string> _env;
+        public TestAuthContext(IReadOnlyDictionary<string, string> env) => _env = env;
+        public Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
+            => Task.FromResult(_env.TryGetValue(name, out var value) ? value : null);
+        public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
     }
 }

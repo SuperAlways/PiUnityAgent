@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using PiUnityAgent.Ai.Providers;
+using PiUnityAgent.Ai.Providers.Auth;
 using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Tests.Providers;
@@ -43,6 +44,19 @@ public class FauxTests
         });
 
         Assert.Equal(2, faux.PendingResponseCount);
+    }
+
+    [Fact]
+    public async Task Provider_Has_Keyless_Auth()
+    {
+        var faux = new FauxProvider();
+        var auth = faux.Provider.Auth;
+
+        Assert.NotNull(auth?.ApiKey);
+        var resolved = await auth!.ApiKey!.Resolve(
+            new ApiKeyResolveInput(new DefaultAuthContext(), null), default);
+
+        Assert.NotNull(resolved);
     }
 
     [Fact]

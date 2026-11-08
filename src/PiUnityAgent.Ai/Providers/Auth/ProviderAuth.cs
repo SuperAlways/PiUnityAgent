@@ -10,19 +10,23 @@ public sealed record ProviderAuth
     public OAuthAuth? OAuth { get; init; }
 }
 
+public sealed record ApiKeyResolveInput(IAuthContext Context, ApiKeyCredential? Credential);
+public sealed record ApiKeyCheckInput(IAuthContext Context, ApiKeyCredential? Credential);
+
 public sealed record ApiKeyAuth
 {
-    public string? Name { get; init; }
-    public Func<AuthContext, AuthOperationOptions?, CancellationToken, Task<string?>>? Resolve { get; init; }
+    public required string Name { get; init; }
+    public Func<ProviderAuthInteraction, CancellationToken, Task<ApiKeyCredential>>? Login { get; init; }
+    public Func<ApiKeyCheckInput, CancellationToken, Task<AuthCheck?>>? Check { get; init; }
+    public required Func<ApiKeyResolveInput, CancellationToken, Task<AuthResult?>> Resolve { get; init; }
 }
 
 public sealed record OAuthAuth
 {
-    public string? Name { get; init; }
+    public required string Name { get; init; }
     public bool IsSubscription { get; init; }
     public string? LoginLabel { get; init; }
-
-    public Func<LoginOptions, AuthInteraction, CancellationToken, Task<Credential>>? Login { get; init; }
-    public Func<Credential, CancellationToken, Task<Credential>>? Refresh { get; init; }
-    public Func<string, CancellationToken, Task>? Logout { get; init; }
+    public required Func<ProviderAuthInteraction, LoginOptions?, CancellationToken, Task<OAuthCredential>> Login { get; init; }
+    public required Func<OAuthCredential, CancellationToken, Task<OAuthCredential>> Refresh { get; init; }
+    public required Func<OAuthCredential, CancellationToken, Task<ModelAuth>> ToAuth { get; init; }
 }

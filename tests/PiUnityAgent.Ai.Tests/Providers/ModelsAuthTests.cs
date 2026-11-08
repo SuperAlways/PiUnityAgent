@@ -11,82 +11,21 @@ public class ModelsAuthTests
         => new()
         {
             Name = "resolver",
-            Resolve = (context, options, ct) => Task.FromResult(key),
+            Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                new AuthResult(new ModelAuth { ApiKey = key }, null, "resolver")),
         };
-
-    private static ApiKeyAuth EnvResolver()
-        => new()
-        {
-            Name = "env",
-            Resolve = (context, options, ct) =>
-                Task.FromResult<string?>(context.Env is not null
-                    && context.Env.TryGetValue("KEY", out var value) ? value : null),
-        };
-
-    [Fact]
-    public async Task Auth_Options_Win_Over_Store_And_Provider()
-    {
-        var store = new InMemoryCredentialStore();
-        await store.SetAsync("p1", new ApiKeyCredential("store-key"));
-        var models = new Models(store, new AuthContext
-        {
-            Env = new Dictionary<string, string> { ["KEY"] = "env-key" },
-        });
-        models.SetProvider(ProviderTestSupport.CreateProvider(
-            auth: new ProviderAuth { ApiKey = EnvResolver() }));
-
-        var result = await models.GetAuthAsync(
-            "p1",
-            new AuthResolutionOverrides { ApiKey = "options-key" });
-
-        Assert.Equal("options-key", Assert.IsType<ApiKeyCredential>(result!.Credential).Key);
-        Assert.Equal("options", result.Source);
-    }
-
-    [Fact]
-    public async Task Store_Wins_Over_Provider()
-    {
-        var store = new InMemoryCredentialStore();
-        await store.SetAsync("p1", new ApiKeyCredential("store-key"));
-        var models = new Models(store);
-        models.SetProvider(ProviderTestSupport.CreateProvider(
-            auth: new ProviderAuth { ApiKey = EnvResolver() }));
-
-        var result = await models.GetAuthAsync("p1");
-
-        Assert.Equal("store-key", Assert.IsType<ApiKeyCredential>(result!.Credential).Key);
-        Assert.Equal("store", result.Source);
-    }
-
-    [Fact]
-    public async Task Provider_Resolver_Reads_Auth_Context_Env()
-    {
-        var models = new Models(authContext: new AuthContext
-        {
-            Env = new Dictionary<string, string> { ["KEY"] = "env-key" },
-        });
-        models.SetProvider(ProviderTestSupport.CreateProvider(
-            auth: new ProviderAuth { ApiKey = EnvResolver() }));
-
-        var result = await models.GetAuthAsync("p1");
-
-        Assert.Equal("env-key", Assert.IsType<ApiKeyCredential>(result!.Credential).Key);
-        Assert.Equal("provider", result.Source);
-    }
-
-    [Fact]
-    public async Task GetAuth_Unknown_Provider_Returns_Null()
-    {
-        var models = new Models();
-        Assert.Null(await models.GetAuthAsync("missing"));
-    }
 
     [Fact]
     public async Task Missing_Auth_Becomes_Error_On_Stream()
     {
         var models = new Models();
         models.SetProvider(ProviderTestSupport.CreateProvider(
-            auth: new ProviderAuth { ApiKey = new ApiKeyAuth() }));
+            auth: new ProviderAuth { ApiKey = new ApiKeyAuth
+            {
+                Name = "test",
+                Resolve = (_, _) => Task.FromResult<AuthResult?>(null),
+            }
+            }));
 
         var stream = models.Stream(
             ProviderTestSupport.CreateModel(),
@@ -95,6 +34,149 @@ public class ModelsAuthTests
 
         Assert.Equal(StopReason.Error, done.StopReason);
         Assert.Contains("Authentication not configured", done.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task GetAuth_Stored_OAuth_Wins_Over_Ambient_ApiKey()
+    {
+        var store = new InMemoryCredentialStore();
+        var oauthCredential = new OAuthCredential
+        {
+            RefreshToken = "r",
+            AccessToken = "oauth-key",
+            ExpiresAt = long.MaxValue,
+        };
+        await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(oauthCredential));
+        var models = new Models(store);
+        models.SetProvider(ProviderTestSupport.CreateProvider(
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "ambient",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                        new AuthResult(new ModelAuth { ApiKey = "ambient-key" }, null, "ambient")),
+                },
+                OAuth = new OAuthAuth
+                {
+                    Name = "oauth",
+                    Login = (_, _, _) => Task.FromResult(oauthCredential),
+                    Refresh = (credential, _) => Task.FromResult(credential),
+                    ToAuth = (credential, _) => Task.FromResult(new ModelAuth { ApiKey = credential.AccessToken }),
+                },
+            }));
+
+        var result = await models.GetAuthAsync("p1");
+
+        Assert.NotNull(result);
+        Assert.Equal("oauth-key", result!.Auth.ApiKey);
+        Assert.Equal("OAuth", result.Source);
+    }
+
+    [Fact]
+    public async Task GetAuth_Override_ApiKey_Passes_Env_To_Provider()
+    {
+        IReadOnlyDictionary<string, string>? seenEnv = null;
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider(
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "test",
+                    Resolve = (input, _) =>
+                    {
+                        seenEnv = input.Credential?.Env;
+                        return Task.FromResult<AuthResult?>(
+                            new AuthResult(
+                                new ModelAuth { ApiKey = input.Credential?.Key },
+                                input.Credential?.Env,
+                                "resolver"));
+                    },
+                },
+            }));
+
+        var result = await models.GetAuthAsync("p1", new AuthResolutionOverrides
+        {
+            ApiKey = "override",
+            Env = new Dictionary<string, string> { ["REGION"] = "cn" },
+        });
+
+        Assert.Equal("override", result!.Auth.ApiKey);
+        Assert.Equal("cn", seenEnv!["REGION"]);
+    }
+
+    [Fact]
+    public async Task GetAuth_Model_Headers_Are_Merged()
+    {
+        var model = ProviderTestSupport.CreateModel() with
+        {
+            Headers = new Dictionary<string, string> { ["x-model"] = "m" },
+        };
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider(
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "test",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                        new AuthResult(
+                            new ModelAuth
+                            {
+                                Headers = new Dictionary<string, string?> { ["x-auth"] = "a" },
+                            },
+                            null,
+                            "resolver")),
+                },
+            }));
+
+        var result = await models.GetAuthAsync(model);
+
+        Assert.Equal("m", result!.Auth.Headers!["x-model"]);
+        Assert.Equal("a", result.Auth.Headers["x-auth"]);
+    }
+
+    [Fact]
+    public async Task CheckAuth_Stored_OAuth_Returns_OAuth_Type()
+    {
+        var store = new InMemoryCredentialStore();
+        await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
+            new OAuthCredential { RefreshToken = "r", AccessToken = "a", ExpiresAt = long.MaxValue }));
+        var models = new Models(store);
+        models.SetProvider(ProviderTestSupport.CreateProvider(
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "ambient",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(
+                        new AuthResult(new ModelAuth { ApiKey = "ambient" }, null, "ambient")),
+                },
+                OAuth = new OAuthAuth
+                {
+                    Name = "oauth",
+                    Login = (_, _, _) => Task.FromResult(new OAuthCredential
+                    {
+                        RefreshToken = "r",
+                        AccessToken = "a",
+                        ExpiresAt = 1,
+                    }),
+                    Refresh = (credential, _) => Task.FromResult(credential),
+                    ToAuth = (credential, _) => Task.FromResult(new ModelAuth { ApiKey = credential.AccessToken }),
+                },
+            }));
+
+        var check = await models.CheckAuthAsync("p1");
+
+        Assert.Equal(AuthType.OAuth, check!.Type);
+    }
+
+    [Fact]
+    public async Task GetAuth_Unknown_Provider_Returns_Null()
+    {
+        var models = new Models();
+        Assert.Null(await models.GetAuthAsync("missing"));
     }
 
     [Fact]
@@ -127,11 +209,19 @@ public class ModelsAuthTests
             auth: new ProviderAuth { ApiKey = Resolver("key") }));
         models.SetProvider(ProviderTestSupport.CreateProvider(
             id: "p2",
-            auth: new ProviderAuth { ApiKey = new ApiKeyAuth() }));
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "missing",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(null),
+                },
+            }));
 
         var check = await models.CheckAuthAsync("p1");
-        Assert.True(check!.Configured);
+        Assert.NotNull(check);
         Assert.Equal(AuthType.ApiKey, check.Type);
+        Assert.Null(await models.CheckAuthAsync("p2"));
 
         var available = await models.GetAvailableAsync();
         Assert.Single(available);
@@ -139,28 +229,26 @@ public class ModelsAuthTests
     }
 
     [Fact]
-    public async Task Auth_Less_Provider_Is_Available()
-    {
-        var models = new Models();
-        models.SetProvider(ProviderTestSupport.CreateProvider());
-
-        Assert.True((await models.CheckAuthAsync("p1"))!.Configured);
-        Assert.Single(await models.GetAvailableAsync());
-    }
-
-    [Fact]
     public async Task Logout_Deletes_Store_Credential()
     {
         var store = new InMemoryCredentialStore();
-        await store.SetAsync("p1", new ApiKeyCredential("store-key"));
+        await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
+            new ApiKeyCredential("store-key")));
         var models = new Models(store);
         models.SetProvider(ProviderTestSupport.CreateProvider(
-            auth: new ProviderAuth { ApiKey = new ApiKeyAuth() }));
+            auth: new ProviderAuth
+            {
+                ApiKey = new ApiKeyAuth
+                {
+                    Name = "none",
+                    Resolve = (_, _) => Task.FromResult<AuthResult?>(null),
+                },
+            }));
 
         await models.LogoutAsync("p1");
 
         Assert.Null(await models.GetAuthAsync("p1"));
-        Assert.Null(await store.GetAsync("p1"));
+        Assert.Null(await store.ReadAsync("p1"));
     }
 
     [Fact]

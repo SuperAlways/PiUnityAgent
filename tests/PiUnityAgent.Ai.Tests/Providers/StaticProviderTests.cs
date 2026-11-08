@@ -66,7 +66,7 @@ public class StaticProviderTests
     public void Exposes_Metadata_And_Auth()
     {
         var headers = new Dictionary<string, string?> { ["x-provider"] = "1" };
-        var auth = new ProviderAuth { ApiKey = new ApiKeyAuth() };
+        var auth = ProviderTestSupport.KeylessAuth();
         var provider = ProviderTestSupport.CreateProvider(
             id: "p1",
             baseUrl: "https://example.test",
