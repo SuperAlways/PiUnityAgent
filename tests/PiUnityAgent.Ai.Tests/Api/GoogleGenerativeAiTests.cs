@@ -18,7 +18,9 @@ namespace PiUnityAgent.Ai.Tests.Api;
 /// <summary>
 /// Google Generative AI（Gemini）协议适配器验收（S5 Task 4 简报矩阵）：
 /// URL/头（x-goog-api-key、identity）、body 顶层字段（contents/systemInstruction/generationConfig/tools/toolConfig）、
-/// thinkingConfig（budget/level/禁用回退）、消息转换（model/user parts、functionCall/functionResponse、thought 签名回放）、
+/// thinkingConfig（budget/level/禁用回退）、消息转换（model/user parts、functionCall 回放、
+/// toolResult→functionResponse：output/error 键、连续合并单 user turn、Gemini 3 多模态 parts 内嵌 + 显式 id、
+/// <3 独立图片 turn）、
 /// 响应流（text/thought 切换、functionCall、usage、finishReason）、错误/取消终态、
 /// 流前重试、hooks、StreamSimple 思考档位。全走 MockFetch，无网无进程环境。
 /// </summary>
@@ -487,14 +489,142 @@ public class GoogleGenerativeAiTests
     }
 
     [Fact]
-    public async Task No_Tools_Sends_No_Tools_And_No_ToolConfig()
+    public async Task ToolResult_Output_Uses_FunctionResponse()
     {
         var fetch = new MockFetch();
         fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        var result = new ToolResultMessage
+        {
+            ToolCallId = "call_1",
+            ToolName = "get_weather",
+            Content = new ContentBlock[] { new TextContent { Text = "sunny" } },
+            IsError = false,
+            Timestamp = 4,
+        };
         _ = await CollectAsync(GoogleGenerativeAi.Stream(
-            CreateBudgetModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
-        Assert.Null(Body(fetch)["tools"]);
-        Assert.Null(Body(fetch)["toolConfig"]);
+            CreateBudgetModel(), Context(result), CreateOptions(fetch)));
+
+        // 成功结果走 functionResponse，文本落 response.output（SDK 约定键）。
+        var contents = Body(fetch)["contents"]!.AsArray();
+        Assert.Single(contents);
+        Assert.Equal("user", contents[0]!["role"]!.GetValue<string>());
+        var functionResponse = contents[0]!["parts"]![0]!["functionResponse"]!;
+        Assert.Equal("get_weather", functionResponse["name"]!.GetValue<string>());
+        Assert.Equal("sunny", functionResponse["response"]!["output"]!.GetValue<string>());
+        Assert.Null(functionResponse["response"]!["error"]);
+        // Gemini 2.x 不要求显式 id。
+        Assert.Null(functionResponse["id"]);
+    }
+
+    [Fact]
+    public async Task ToolResult_Error_Uses_FunctionResponse_Error()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        var result = new ToolResultMessage
+        {
+            ToolCallId = "call_1",
+            ToolName = "get_weather",
+            Content = new ContentBlock[] { new TextContent { Text = "city not found" } },
+            IsError = true,
+            Timestamp = 4,
+        };
+        _ = await CollectAsync(GoogleGenerativeAi.Stream(
+            CreateBudgetModel(), Context(result), CreateOptions(fetch)));
+
+        // IsError=true → 文本落 response.error，不带 output 键。
+        var functionResponse = Body(fetch)["contents"]!.AsArray()[0]!["parts"]![0]!["functionResponse"]!;
+        Assert.Equal("get_weather", functionResponse["name"]!.GetValue<string>());
+        Assert.Equal("city not found", functionResponse["response"]!["error"]!.GetValue<string>());
+        Assert.Null(functionResponse["response"]!["output"]);
+    }
+
+    [Fact]
+    public async Task Consecutive_ToolResults_Merge_Into_Single_User_Turn()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        var result = new ToolResultMessage
+        {
+            ToolCallId = "call_1",
+            ToolName = "get_weather",
+            Content = new ContentBlock[] { new TextContent { Text = "sunny" } },
+            IsError = false,
+            Timestamp = 4,
+        };
+        var result2 = new ToolResultMessage
+        {
+            ToolCallId = "call_2",
+            ToolName = "get_time",
+            Content = new ContentBlock[] { new TextContent { Text = "boom" } },
+            IsError = true,
+            Timestamp = 5,
+        };
+        _ = await CollectAsync(GoogleGenerativeAi.Stream(
+            CreateBudgetModel(), Context(result, result2), CreateOptions(fetch)));
+
+        // pi 合并规则：连续 toolResult 收进单个 user turn（Cloud Code Assist 约定）。
+        var contents = Body(fetch)["contents"]!.AsArray();
+        Assert.Single(contents);
+        Assert.Equal("user", contents[0]!["role"]!.GetValue<string>());
+        var parts = contents[0]!["parts"]!.AsArray();
+        Assert.Equal(2, parts.Count);
+        var first = parts[0]!["functionResponse"]!;
+        Assert.Equal("get_weather", first["name"]!.GetValue<string>());
+        Assert.Equal("sunny", first["response"]!["output"]!.GetValue<string>());
+        var second = parts[1]!["functionResponse"]!;
+        Assert.Equal("get_time", second["name"]!.GetValue<string>());
+        Assert.Equal("boom", second["response"]!["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Gemini3_ToolResult_Image_Uses_Multimodal_Parts()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        var result = new ToolResultMessage
+        {
+            ToolCallId = "call_img",
+            ToolName = "render",
+            Content = new ContentBlock[]
+            {
+                new TextContent { Text = "rendered" },
+                new ImageContent { Data = "aGk=", MimeType = "image/png" },
+            },
+            IsError = false,
+            Timestamp = 4,
+        };
+        _ = await CollectAsync(GoogleGenerativeAi.Stream(
+            CreateLevelModel(), Context(result), CreateOptions(fetch)));
+
+        // Gemini 3+ 支持多模态 functionResponse：inlineData parts 内嵌进 functionResponse，
+        // 且 requiresToolCallId → 显式 id 回传。
+        var contents = Body(fetch)["contents"]!.AsArray();
+        Assert.Single(contents);
+        var functionResponse = contents[0]!["parts"]![0]!["functionResponse"]!;
+        Assert.Equal("render", functionResponse["name"]!.GetValue<string>());
+        Assert.Equal("rendered", functionResponse["response"]!["output"]!.GetValue<string>());
+        Assert.Equal("call_img", functionResponse["id"]!.GetValue<string>());
+        var imageParts = functionResponse["parts"]!.AsArray();
+        Assert.Single(imageParts);
+        Assert.Equal("image/png", imageParts[0]!["inlineData"]!["mimeType"]!.GetValue<string>());
+        Assert.Equal("aGk=", imageParts[0]!["inlineData"]!["data"]!.GetValue<string>());
+
+        // 对照 Gemini 2.x：不支持多模态 functionResponse → 图片拆独立 user turn（pi 同）。
+        var v2Fetch = new MockFetch();
+        v2Fetch.EnqueueText(Sse(Chunk(finishReason: "STOP")), headers: SseHeaders());
+        _ = await CollectAsync(GoogleGenerativeAi.Stream(
+            CreateBudgetModel(), Context(result), CreateOptions(v2Fetch)));
+        var v2Contents = Body(v2Fetch)["contents"]!.AsArray();
+        Assert.Equal(2, v2Contents.Count);
+        var v2Response = v2Contents[0]!["parts"]![0]!["functionResponse"]!;
+        // 文本仍在 response.output（"(see attached image)" 只在纯图片结果时出现）；图片不进 functionResponse.parts。
+        Assert.Equal("rendered", v2Response["response"]!["output"]!.GetValue<string>());
+        Assert.Null(v2Response["parts"]);
+        Assert.Null(v2Response["id"]);
+        var imageTurnParts = v2Contents[1]!["parts"]!.AsArray();
+        Assert.Equal("Tool result image:", imageTurnParts[0]!["text"]!.GetValue<string>());
+        Assert.Equal("image/png", imageTurnParts[1]!["inlineData"]!["mimeType"]!.GetValue<string>());
     }
 
     // ------------------------------------------------------------------
