@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PiUnityAgent.Ai\PiUnityAgent.Ai.csproj" />
+    <ProjectReference Include="../../third_party/UnityLlmTransport/src/UnityLlmTransport.Abstractions/UnityLlmTransport.Abstractions.csproj" />
+    <ProjectReference Include="../../third_party/UnityLlmTransport/src/UnityLlmTransport.HttpClient/UnityLlmTransport.HttpClient.csproj" />
+  </ItemGroup>
+
+</Project>

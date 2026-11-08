@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/PiUnityAgent.Ai/PiUnityAgent.Ai.csproj" />
     <Project Path="src/PiUnityAgent.Core/PiUnityAgent.Core.csproj" />
+    <Project Path="src/PiUnityAgent.Hosts.Net8/PiUnityAgent.Hosts.Net8.csproj" />
     <Project Path="src/PiUnityAgent.Runtime/PiUnityAgent.Runtime.csproj" />
   </Folder>
   <Folder Name="/third_party/UnityLlmTransport/">
@@ -15,5 +16,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/PiUnityAgent.Ai.Tests/PiUnityAgent.Ai.Tests.csproj" />
     <Project Path="tests/PiUnityAgent.Core.Tests/PiUnityAgent.Core.Tests.csproj" />
+    <Project Path="tests/PiUnityAgent.Hosts.Net8.Tests/PiUnityAgent.Hosts.Net8.Tests.csproj" />
   </Folder>
 </Solution>
