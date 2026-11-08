@@ -18,9 +18,10 @@ namespace PiUnityAgent.Ai.Tests.Providers;
 /// <summary>
 /// S4 后置能力承接验收（D12/D13）：
 /// - D12 可用性单次解析：`GetAvailable*` 每 provider 只调用一次 `ApiKeyAuth.Check`（权威口径），
-///   且 `AuthOperationOptions.CancellationToken` 传递到 Check；不触进程 env；
+///   且 `AuthOperationOptions.CancellationToken` 传递到 Check；Check 存在即不回落 Resolve；不触进程 env；
 /// - D13 Fetch 超时映射：provider 适配器把 `StreamOptions.TimeoutMs` 映射为
-///   `FetchOptions.ConnectTimeout/FirstByteTimeout/IdleTimeout` 同值。
+///   `FetchOptions.ConnectTimeout/FirstByteTimeout/IdleTimeout` 同值；
+///   Fetch 抛 FirstByteTimeout/IdleTimeout → 终态 Error（消息透传，默认 MaxRetries=0 不重试）。
 /// 「无默认 Fetch → 终态 Error」已由协议测试锁定：
 /// `OpenAiCompletionsTests.Missing_Fetch_Becomes_Terminal_Error` /
 /// `OpenAiResponsesTests.Missing_Fetch_Becomes_Terminal_Error`。
@@ -37,18 +38,23 @@ public class S4DeferredCapabilityTests
     public async Task GetAvailable_Checks_Each_Provider_Only_Once_And_Passes_CancellationToken()
     {
         var checkCount = 0;
+        var resolveCount = 0;
         CancellationToken seenCt = default;
         using var cts = new CancellationTokenSource();
         var models = NewModels();
         models.SetProvider(ProviderTestSupport.CreateProvider(
             id: "p1",
-            auth: CheckedAuth(() => Interlocked.Increment(ref checkCount), ct => seenCt = ct)));
+            auth: CheckedAuth(
+                () => Interlocked.Increment(ref checkCount),
+                ct => seenCt = ct,
+                onResolve: () => Interlocked.Increment(ref resolveCount))));
 
         var available = await models.GetAvailableAsync(
             provider: null,
             new AuthOperationOptions { CancellationToken = cts.Token });
 
         Assert.Equal(1, checkCount);
+        Assert.Equal(0, resolveCount); // Check 为权威口径：存在即不回落 Resolve
         var model = Assert.Single(available);
         Assert.Equal("m1", model.Id);
         Assert.Equal("p1", model.Provider);
@@ -79,7 +85,10 @@ public class S4DeferredCapabilityTests
         });
 
     /// <summary>Check 为权威口径（存在即不回落 Resolve）；Resolve 仅兜底，不应被触达。</summary>
-    private static ProviderAuth CheckedAuth(Action onCheck, Action<CancellationToken> onCheckCt)
+    private static ProviderAuth CheckedAuth(
+        Action onCheck,
+        Action<CancellationToken> onCheckCt,
+        Action? onResolve = null)
         => new()
         {
             ApiKey = new ApiKeyAuth
@@ -91,8 +100,12 @@ public class S4DeferredCapabilityTests
                     onCheckCt(ct);
                     return Task.FromResult<AuthCheck?>(new AuthCheck(AuthType.ApiKey, "checked"));
                 },
-                Resolve = (_, _) => Task.FromResult<AuthResult?>(
-                    new AuthResult(new ModelAuth { ApiKey = "resolved" }, null, "resolver")),
+                Resolve = (_, _) =>
+                {
+                    onResolve?.Invoke();
+                    return Task.FromResult<AuthResult?>(
+                        new AuthResult(new ModelAuth { ApiKey = "resolved" }, null, "resolver"));
+                },
             },
         };
 
@@ -133,6 +146,49 @@ public class S4DeferredCapabilityTests
 
         AssertStreamCompletedNormally(events);
         AssertUniformTimeouts(capture.Seen!, TimeSpan.FromMilliseconds(4321));
+    }
+
+    [Fact]
+    public async Task Completions_FirstByteTimeout_Becomes_Error_Terminal()
+    {
+        // D13 证据补强：Fetch 抛 FirstByteTimeout（传输层标可重试）→ 适配器终态 Error，
+        // 消息透传「first byte」；默认 MaxRetries=0 ⇒ 即使 IsRetryable=true 也只打一发。
+        var fetch = new MockFetch();
+        fetch.EnqueueException(new FetchException(FetchErrorKind.FirstByteTimeout, "first byte timeout")
+        {
+            IsRetryable = true,
+        });
+
+        var events = await CollectAsync(OpenAiCompletions.Stream(
+            CreateModel("openai-completions"),
+            CreateContext(),
+            new OpenAiCompletionsOptions { ApiKey = "test-key", Fetch = fetch.Fetch }));
+
+        var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("first byte", error.Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(1, fetch.CallCount);
+    }
+
+    [Fact]
+    public async Task Responses_IdleTimeout_Becomes_Error_Terminal()
+    {
+        // 同上走 Responses 适配器：IdleTimeout 同样归一为终态 Error 且不重试。
+        var fetch = new MockFetch();
+        fetch.EnqueueException(new FetchException(FetchErrorKind.IdleTimeout, "idle timeout")
+        {
+            IsRetryable = true,
+        });
+
+        var events = await CollectAsync(OpenAiResponses.Stream(
+            CreateModel("openai-responses"),
+            CreateContext(),
+            new OpenAiResponsesOptions { ApiKey = "test-key", Fetch = fetch.Fetch }));
+
+        var error = Assert.IsType<AssistantMessageEvent.Error>(Assert.Single(events));
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("idle", error.Message.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(1, fetch.CallCount);
     }
 
     /// <summary>一次 Fetch 即回放固定 SSE 的 MockFetch 包装；捕获传给 Fetch 的 FetchOptions。</summary>
