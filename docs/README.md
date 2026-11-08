@@ -1,7 +1,7 @@
 # docs · 索引
 
 > **状态约定**：✅ 已完成/已合 main · 🟡 待 review/待执行 · ⬜ 未开始 · 🗄 历史归档
-> **最后同步**：2026-11-08（S3 v3 已合 main；S4/S5 范围收敛为 4 协议族 + 首批 provider profile；UnityLlmTransport Phase 0–6 完成，锁 `4c0cc4b`/`0.6.0`）
+> **最后同步**：2026-11-08（S3 v3 已合 main；S4/S5 范围收敛为 4 协议族 + 首批 provider profile；S4 spec/plan v1 已起草；UnityLlmTransport Phase 0–6 完成，锁 `4c0cc4b`/`0.6.0`）
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
@@ -28,6 +28,8 @@
 | [superpowers/plans/2026-11-07-S3-对齐返工-v2.md](superpowers/plans/2026-11-07-S3-对齐返工-v2.md) | S3 返工 v2 实现计划（Fetch/Model/Options/Auth/LazyStream/Models/Faux + 文档门禁） | ✅ 已执行 |
 | [superpowers/specs/2026-11-08-S3-v3-偏离补齐-design.md](superpowers/specs/2026-11-08-S3-v3-偏离补齐-design.md) | S3 v3.1 偏离补齐 spec：Auth 全套形状、Auth 解析顺序/锁语义、ModelsError/ProviderFactory/FilterAll、ClientIdentity、LazyStreamObserver、ModelsStore、Options 严格化（§6 表已逐行对齐代码） | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（待用户验收合 main） |
 | [superpowers/plans/2026-11-08-S3-v3-偏离补齐.md](superpowers/plans/2026-11-08-S3-v3-偏离补齐.md) | S3 v3.1 实现计划（Auth/ProviderFactory/Models/Options/Faux/ClientIdentity + 最终独立审计） | ✅ 已执行（Task 9 审计/复核完成；D14 转 S4） |
+| [superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md](superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md) | S4 OpenAI 家族（completions + responses）协议适配 spec：首批 8 家 profile、MockFetch、Dn 承接、三方偏离表 | 🟡 待 review |
+| [superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md](superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md) | S4 实施计划：UnityLlmTransport 源码 vendoring + Hosts.Net8 Fetch 适配器 + 两协议/8 家 profile/Dn/审计 | 🟡 待执行 |
 | [learning/](learning/README.md) | 教学与心智模型：导读、Q&A、逐阶段教学篇 | 骨架 |
 | [learning/REFERENCES.md](learning/REFERENCES.md) | pi 教学项目逐章参考索引（按 S0–S13） | v1 |
 | [archive/2026-11-06-Unity流式HTTP与SSE-调研问题](archive/2026-11-06-Unity流式HTTP与SSE-调研问题.md) | 通讯组件立项前的调研问题（历史） | 🗄 已被 UnityLlmTransport docs 取代 |
