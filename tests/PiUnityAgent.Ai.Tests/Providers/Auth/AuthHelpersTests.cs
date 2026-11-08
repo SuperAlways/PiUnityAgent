@@ -32,22 +32,17 @@ public class AuthHelpersTests
     public async Task EnvApiKeyAuth_Stored_Key_Wins_And_Env_Is_Ordered()
     {
         var auth = AuthHelpers.EnvApiKeyAuth("Test API key", new[] { "PRIMARY", "SECONDARY" });
-        var ctx = new DefaultAuthContext();
         var stored = new ApiKeyCredential("stored");
-        var result = await auth.Resolve(new ApiKeyResolveInput(ctx, stored), default);
+        var result = await auth.Resolve(
+            new ApiKeyResolveInput(new StaticEnvAuthContext(new Dictionary<string, string>()), stored), default);
         Assert.Equal("stored", result!.Auth.ApiKey);
 
-        Environment.SetEnvironmentVariable("SECONDARY", "env-key");
-        try
-        {
-            var ambient = await auth.Resolve(new ApiKeyResolveInput(ctx, null), default);
-            Assert.Equal("env-key", ambient!.Auth.ApiKey);
-            Assert.Equal("SECONDARY", ambient.Source);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SECONDARY", null);
-        }
+        var ambient = await auth.Resolve(
+            new ApiKeyResolveInput(
+                new StaticEnvAuthContext(new Dictionary<string, string> { ["SECONDARY"] = "env-key" }), null),
+            default);
+        Assert.Equal("env-key", ambient!.Auth.ApiKey);
+        Assert.Equal("SECONDARY", ambient.Source);
     }
 
     [Fact]
