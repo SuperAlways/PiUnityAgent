@@ -8,7 +8,8 @@ namespace PiUnityAgent.Ai.Tests.Providers;
 /// <summary>
 /// S4 Task 8A：D2 动态模型目录刷新（Models.RefreshAsync + IRefreshableProvider + IModelsStore）。
 /// 语义对齐 pi models.ts：createProvider refreshModels 包装（models.ts:1129-1160）、
-/// currentModels 覆盖（models.ts:1093-1103）、Models.refresh（models.ts:565-623）。
+/// currentModels 覆盖（models.ts:1093-1103）、Models.refresh 两阶段（models.ts:565-675，
+/// 阶段 A 恢复 → resolveRefreshCredential → 阶段 B 联网；AllowNetwork 缺省 true）。
 /// </summary>
 public class S4RefreshTests
 {
@@ -18,6 +19,29 @@ public class S4RefreshTests
         {
             Name = "keyless",
             Resolve = (_, _) => Task.FromResult<AuthResult?>(new AuthResult(new ModelAuth(), null, "keyless")),
+        },
+    };
+
+    /// <summary>Resolve 解析不出凭据（返回 null）→ 刷新无有效凭据，跳过网络阶段。</summary>
+    private static ProviderAuth UnresolvableAuth() => new()
+    {
+        ApiKey = new ApiKeyAuth
+        {
+            Name = "unresolvable",
+            Resolve = (_, _) => Task.FromResult<AuthResult?>(null),
+        },
+    };
+
+    /// <summary>Resolve 从注入上下文解析出 key/env → 合成凭据随 context.Credential 进网络阶段。</summary>
+    private static ProviderAuth ResolvedKeyAuth() => new()
+    {
+        ApiKey = new ApiKeyAuth
+        {
+            Name = "resolved-key",
+            Resolve = (_, _) => Task.FromResult<AuthResult?>(new AuthResult(
+                new ModelAuth { ApiKey = "sk-resolved" },
+                new Dictionary<string, string> { ["ENV_NAME"] = "resolved-env" },
+                "resolved-key")),
         },
     };
 
@@ -48,17 +72,34 @@ public class S4RefreshTests
     private static CreateProviderOptions Options(
         string id,
         Func<RefreshModelsContext, Task<IReadOnlyList<ProviderModel>>>? fetchModels = null,
-        IReadOnlyList<ProviderModel>? models = null)
+        IReadOnlyList<ProviderModel>? models = null,
+        ProviderAuth? auth = null)
         => new()
         {
             Id = id,
-            Auth = Keyless(),
+            Auth = auth ?? Keyless(),
             Models = models ?? new ProviderModel[] { Chat("static", id) },
             Api = Streams(),
             FetchModels = fetchModels,
         };
 
     private static IReadOnlyList<ProviderModel> NoModels() => Array.Empty<ProviderModel>();
+
+    /// <summary>注入静态 IAuthContext：测试全程不触进程 env（DefaultAuthContext 会读环境变量）。</summary>
+    private sealed class NullAuthContext : IAuthContext
+    {
+        public Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
+
+        public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+    }
+
+    private static Models NewModels(IModelsStore? store = null) => new(new CreateModelsOptions
+    {
+        ModelsStore = store ?? new InMemoryModelsStore(),
+        AuthContext = new NullAuthContext(),
+    });
 
     [Fact]
     public void Factory_With_FetchModels_Is_Refreshable()
@@ -86,15 +127,15 @@ public class S4RefreshTests
             Models = new ProviderModel[] { Chat("cached", "p1") },
             CheckedAt = 1,
         });
-        var models = new Models(new CreateModelsOptions { ModelsStore = store });
+        var models = NewModels(store);
         models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ =>
         {
             fetchCalls++;
             return Task.FromResult(NoModels());
         })));
 
-        // AllowNetwork 缺省 false：只走存储恢复阶段（S4 偏离 pi 缺省 true）。
-        var result = await models.RefreshAsync();
+        // AllowNetwork=false：只走阶段 A 存储恢复（缺省 true，另见 Refresh_Default_AllowNetwork_True_Fetches）。
+        var result = await models.RefreshAsync(new ModelsRefreshOptions { AllowNetwork = false });
 
         Assert.False(result.Aborted);
         Assert.Empty(result.Errors);
@@ -113,7 +154,7 @@ public class S4RefreshTests
     public async Task Refresh_Fetches_Persists_And_Overlays_Baseline()
     {
         var store = new InMemoryModelsStore();
-        var models = new Models(new CreateModelsOptions { ModelsStore = store });
+        var models = NewModels(store);
         models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ => Task.FromResult<IReadOnlyList<ProviderModel>>(
             new ProviderModel[]
             {
@@ -153,7 +194,7 @@ public class S4RefreshTests
             Models = new ProviderModel[] { Chat("cached", "p1") },
             CheckedAt = 1,
         });
-        var models = new Models(new CreateModelsOptions { ModelsStore = store });
+        var models = NewModels(store);
         models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ =>
             throw new InvalidOperationException("boom"))));
 
@@ -177,7 +218,7 @@ public class S4RefreshTests
     {
         var store = new InMemoryModelsStore();
         var calls = new List<string>();
-        var models = new Models(new CreateModelsOptions { ModelsStore = store });
+        var models = NewModels(store);
         models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ =>
         {
             calls.Add("p1");
@@ -207,7 +248,7 @@ public class S4RefreshTests
     public async Task Refresh_Cancelled_Returns_Aborted_Without_Fetch()
     {
         var fetchCalls = 0;
-        var models = new Models(new CreateModelsOptions { ModelsStore = new InMemoryModelsStore() });
+        var models = NewModels();
         models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ =>
         {
             fetchCalls++;
@@ -235,16 +276,97 @@ public class S4RefreshTests
             Models = new ProviderModel[] { Chat("cached", "p1") },
             CheckedAt = 1,
         });
-        var models = new Models(new CreateModelsOptions { ModelsStore = store });
+        var models = NewModels(store);
         models.SetProvider(new RefreshDecorator(
             ProviderFactory.Create(Options("p1")),
             context => context.Publish(new ModelsPublication { Delete = true })));
 
+        // 缺省 AllowNetwork=true：阶段 A 恢复即发布 Delete 删掉 store 条目。
         var result = await models.RefreshAsync();
 
         Assert.False(result.Aborted);
         Assert.Empty(result.Errors);
         Assert.Null(await store.ReadAsync("p1"));
+    }
+
+    [Fact]
+    public async Task Refresh_Default_AllowNetwork_True_Fetches_Without_Option()
+    {
+        var fetchCalls = 0;
+        var store = new InMemoryModelsStore();
+        var models = NewModels(store);
+        models.SetProvider(ProviderFactory.Create(Options("p1", fetchModels: _ =>
+        {
+            fetchCalls++;
+            return Task.FromResult<IReadOnlyList<ProviderModel>>(
+                new ProviderModel[] { Chat("fresh", "p1") });
+        })));
+
+        // 缺省 AllowNetwork=true（对齐 pi options.allowNetwork ?? true）：不带选项也执行网络阶段。
+        var result = await models.RefreshAsync();
+
+        Assert.False(result.Aborted);
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, fetchCalls);
+        var entry = await store.ReadAsync("p1");
+        Assert.NotNull(entry);
+        Assert.Contains(entry!.Models, model => model.Id == "fresh");
+        Assert.Contains(models.GetModels("p1"), model => model.Id == "fresh");
+    }
+
+    [Fact]
+    public async Task Refresh_No_Effective_Credential_Skips_Network_Phase()
+    {
+        var fetchCalls = 0;
+        var store = new InMemoryModelsStore();
+        var models = NewModels(store);
+        models.SetProvider(ProviderFactory.Create(Options(
+            "p1",
+            fetchModels: _ =>
+            {
+                fetchCalls++;
+                return Task.FromResult<IReadOnlyList<ProviderModel>>(
+                    new ProviderModel[] { Chat("fresh", "p1") });
+            },
+            auth: UnresolvableAuth())));
+
+        // 显式开网络仍不拉：ApiKey.Resolve 解析不出凭据 → 无有效凭据即跳过网络阶段（pi models.ts:595）。
+        var result = await models.RefreshAsync(new ModelsRefreshOptions { AllowNetwork = true });
+
+        Assert.False(result.Aborted);
+        Assert.Empty(result.Errors);
+        Assert.Equal(0, fetchCalls);
+        Assert.Null(await store.ReadAsync("p1"));
+    }
+
+    [Fact]
+    public async Task Refresh_Effective_ApiKey_From_Resolve_Passed_To_Fetch()
+    {
+        var fetchCalls = 0;
+        ApiKeyCredential? seen = null;
+        var store = new InMemoryModelsStore();
+        var models = NewModels(store);
+        models.SetProvider(ProviderFactory.Create(Options(
+            "p1",
+            fetchModels: context =>
+            {
+                fetchCalls++;
+                seen = context.Credential as ApiKeyCredential;
+                return Task.FromResult<IReadOnlyList<ProviderModel>>(
+                    new ProviderModel[] { Chat("fresh", "p1") });
+            },
+            auth: ResolvedKeyAuth())));
+
+        var result = await models.RefreshAsync(new ModelsRefreshOptions { AllowNetwork = true });
+
+        Assert.False(result.Aborted);
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, fetchCalls);
+        // 阶段 B 凭据 = Resolve 结果合成的 ApiKeyCredential（key + env，pi models.ts:653）。
+        Assert.NotNull(seen);
+        Assert.Equal("sk-resolved", seen!.Key);
+        Assert.NotNull(seen.Env);
+        Assert.Equal("resolved-env", seen.Env!["ENV_NAME"]);
     }
 
     /// <summary>给既有 IProvider 补一个自定义 RefreshModelsAsync，用于验证 Models 侧发布路径（Delete）。</summary>

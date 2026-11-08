@@ -144,14 +144,17 @@ public sealed partial class Models
     }
 
     /// <summary>
-    /// D2：动态模型目录刷新（pi Models.refresh models.ts:565-623 的顺序化版本）。
-    /// 只触达 IRefreshableProvider；单个 provider 失败收集进 Errors，其余照常；取消 → Aborted。
-    /// S4 偏离 pi：AllowNetwork 缺省 false（Unity 内嵌不擅自出网，pi 缺省 true）；
-    /// Credential 取 store 原样（不在此处做 apiKey.resolve/OAuth 派生，交给 FetchModels 侧）。
+    /// D2：动态模型目录刷新（pi Models.refresh models.ts:565-675 的顺序化版本），每 provider 两阶段：
+    /// 阶段 A 恢复（AllowNetwork=false，先于 auth 解析与网络；credential 读失败不挡恢复）→
+    /// 阶段 B 解析有效凭据（resolveRefreshCredential，models.ts:627-654：stored OAuth 未过期原样、
+    /// API key 走 provider Resolve 合成；解析不出即跳过网络）后联网拉取。
+    /// AllowNetwork 缺省 true（对齐 pi）。只触达 IRefreshableProvider；
+    /// 单个 provider 失败收集进 Errors，其余照常；取消 → Aborted。
     /// </summary>
     public async Task<ModelsRefreshResult> RefreshAsync(ModelsRefreshOptions? options = null)
     {
         var ct = options?.CancellationToken ?? default;
+        var allowNetwork = options?.AllowNetwork ?? true;
         var errors = new Dictionary<string, Exception>();
         if (ct.IsCancellationRequested) return new ModelsRefreshResult(true, errors);
 
@@ -167,10 +170,10 @@ public sealed partial class Models
             {
                 // pi：credential 读失败不挡恢复阶段——先记下，恢复照跑，之后按 provider 抛出。
                 Exception? credentialError = null;
-                Credential? credential = null;
+                Credential? storedCredential = null;
                 try
                 {
-                    credential = await ReadCredentialAsync(entry.Id, ct).ConfigureAwait(false);
+                    storedCredential = await ReadCredentialAsync(entry.Id, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -181,23 +184,21 @@ public sealed partial class Models
                     credentialError = error;
                 }
 
-                var stored = await _modelsStore.ReadAsync(
-                    entry.Id,
-                    new ModelsStoreOperationOptions { CancellationToken = ct }).ConfigureAwait(false);
-
-                var context = new RefreshModelsContext
-                {
-                    Credential = credential,
-                    Stored = stored,
-                    BaseUrl = entry.BaseUrl,
-                    // credential 读失败只走恢复阶段（对齐 pi：恢复先于 auth/网络）。
-                    AllowNetwork = (options?.AllowNetwork ?? false) && credentialError is null,
-                    Force = options?.Force ?? false,
-                    CancellationToken = ct,
-                    Publish = publication => PublishModelsAsync(entry.Id, publication, ct),
-                };
-                await refreshable.RefreshModelsAsync(context).ConfigureAwait(false);
+                // 阶段 A：恢复存储目录（pi models.ts:590，先于 auth 解析与网络）。
+                await RunProviderRefreshPhaseAsync(
+                    refreshable, entry.Id, entry.BaseUrl, storedCredential,
+                    allowNetwork: false, force: false, ct).ConfigureAwait(false);
                 if (credentialError is not null) throw credentialError;
+                if (!allowNetwork) continue;
+                if (ct.IsCancellationRequested) return new ModelsRefreshResult(true, errors);
+
+                // 阶段 B：解析有效凭据后联网拉取（pi models.ts:594-596）；无凭据即跳过。
+                var credential = await ResolveRefreshCredentialAsync(entry, storedCredential, ct)
+                    .ConfigureAwait(false);
+                if (credential is null) continue;
+                await RunProviderRefreshPhaseAsync(
+                    refreshable, entry.Id, entry.BaseUrl, credential,
+                    allowNetwork: true, force: options?.Force ?? false, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -210,6 +211,65 @@ public sealed partial class Models
         }
 
         return new ModelsRefreshResult(false, errors);
+    }
+
+    /// <summary>
+    /// pi runProviderRefreshPhase（models.ts:549-563）的顺序化等价：每阶段自读 models store，
+    /// 装配 RefreshModelsContext 后交给 provider；store 每阶段重读与 pi 一致（恢复可幂等重放）。
+    /// </summary>
+    private async Task RunProviderRefreshPhaseAsync(
+        IRefreshableProvider refreshable,
+        string providerId,
+        string? baseUrl,
+        Credential? credential,
+        bool allowNetwork,
+        bool force,
+        CancellationToken ct)
+    {
+        var stored = await _modelsStore.ReadAsync(
+            providerId,
+            new ModelsStoreOperationOptions { CancellationToken = ct }).ConfigureAwait(false);
+        var context = new RefreshModelsContext
+        {
+            Credential = credential,
+            Stored = stored,
+            BaseUrl = baseUrl,
+            AllowNetwork = allowNetwork,
+            // pi：force: allowNetwork ? force : undefined——恢复阶段不带 force。
+            Force = allowNetwork && force,
+            CancellationToken = ct,
+            Publish = publication => PublishModelsAsync(providerId, publication, ct),
+        };
+        await refreshable.RefreshModelsAsync(context).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// pi resolveRefreshCredential（models.ts:627-654）的 C# 等价：
+    /// stored OAuth 且 provider 支持 OAuth → 未过期原样使用（过期视为无有效凭据，跳过网络）；
+    /// 其余走 provider ApiKey.Resolve（带 stored ApiKeyCredential 或 null），解析出结果即合成
+    /// 仅含 key/env 的有效凭据；解析不出 → null（调用方跳过网络阶段）。错误原样上抛。
+    /// </summary>
+    private async Task<Credential?> ResolveRefreshCredentialAsync(
+        IProvider provider,
+        Credential? stored,
+        CancellationToken ct)
+    {
+        if (stored is OAuthCredential oauth)
+        {
+            if (provider.Auth?.OAuth is null) return null;
+            // TODO(S5,D1): 过期 OAuth 应走 oauth.refresh 轮换并持久化（pi refreshStoredOAuthCredential，
+            // models.ts:638-645），轮换出的新凭据由下一次 refresh 读到；当前过期即跳过网络阶段。
+            return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < oauth.ExpiresAt ? oauth : null;
+        }
+
+        var apiKey = provider.Auth?.ApiKey;
+        if (apiKey is null) return null;
+        var result = await apiKey
+            .Resolve(new ApiKeyResolveInput(_authContext, stored as ApiKeyCredential), ct)
+            .ConfigureAwait(false);
+        return result is null
+            ? null
+            : new ApiKeyCredential(result.Auth.ApiKey) { Env = result.Env };
     }
 
     /// <summary>
