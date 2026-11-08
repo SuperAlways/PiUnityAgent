@@ -16,7 +16,7 @@ public sealed class DefaultAuthContext : IAuthContext
     public Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(Environment.GetEnvironmentVariable(name));
+        return Task.FromResult<string?>(Environment.GetEnvironmentVariable(name));
     }
 
     public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
