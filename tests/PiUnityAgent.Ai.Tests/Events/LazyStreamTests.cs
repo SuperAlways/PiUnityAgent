@@ -187,6 +187,28 @@ public class LazyStreamTests
     }
 
     [Fact]
+    public async Task Observer_Receives_Error_Event_On_Setup_Failure()
+    {
+        var model = CreateModel();
+        var events = new List<AssistantMessageEvent>();
+        var results = new List<AssistantMessage?>();
+        var observer = new RecordingObserver(events, results);
+
+        var stream = LazyStream.Run(model,
+            () => throw new InvalidOperationException("setup failed"),
+            observer);
+        var done = await stream.WaitForDoneAsync();
+
+        // pi api/lazy.ts catch 顺序：outer.push → observer.onEvent → outer.end → observeResult。
+        var errorEvent = Assert.Single(events);
+        var error = Assert.IsType<AssistantMessageEvent.Error>(errorEvent);
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Same(done, error.Message);
+        Assert.Single(results);
+        Assert.Same(done, results[0]);
+    }
+
+    [Fact]
     public async Task Observer_OnResult_Is_Called_Exactly_Once_On_Success()
     {
         var model = CreateModel();

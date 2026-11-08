@@ -11,7 +11,7 @@ public static class LazyStream
     /// setup 在同步返回之后异步运行，调用方拿到的瞬间 provider 尚未被调用）。
     /// factory 只启动一次。setup 失败（含 OCE）统一为 Error(Error)；Aborted 由 provider 内层流负责。
     /// 观察顺序按 pi api/lazy.ts：外层 Push 之后调 observer.OnEvent；外层 End 之后调 observer.OnResult；
-    /// setup 失败时 OnResult 收错误终态消息（不是 null），且各只调用一次。
+    /// setup 失败同样先 Push→OnEvent(error 事件) 再 End→OnResult(错误终态消息，不是 null)，各只调用一次。
     /// 对应 pi api/lazy.ts 与 pi.net Api/Lazy.cs。
     /// </summary>
     public static IAssistantMessageEventStream Run(
@@ -65,7 +65,10 @@ public static class LazyStream
                 ErrorMessage = error.Message,
                 Timestamp = startedAt,
             };
-            outer.Push(new AssistantMessageEvent.Error(StopReason.Error, message));
+            // pi api/lazy.ts catch 顺序：push → observer.onEvent → end → observeResult。
+            var errorEvent = new AssistantMessageEvent.Error(StopReason.Error, message);
+            outer.Push(errorEvent);
+            observer?.OnEvent(errorEvent);
             outer.End(message);
             observer?.OnResult(message);
         }

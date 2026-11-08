@@ -158,8 +158,7 @@ public sealed partial class Models
 
     public async Task LogoutAsync(string providerId, AuthOperationOptions? options = null)
     {
-        if (GetProvider(providerId) is null)
-            throw new ModelsError(ModelsErrorCode.Provider, $"Unknown provider: {providerId}");
+        // pi logout：只删 store，不校验 provider 是否注册（未注册/未存凭据都是安静删除）。
         try
         {
             await _credentials.DeleteAsync(providerId, options).ConfigureAwait(false);
@@ -185,7 +184,8 @@ public sealed partial class Models
         if (auth is null) return null;
 
         // 1. 显式 apiKey 只在 provider 支持 api-key 时走 provider Resolve；合成凭据带 Env。
-        if (!string.IsNullOrEmpty(overrides?.ApiKey) && auth.ApiKey is not null)
+        // pi：overrides.apiKey !== undefined——空串也是显式 override。
+        if (overrides?.ApiKey is not null && auth.ApiKey is not null)
         {
             var synthetic = new ApiKeyCredential(overrides.ApiKey) { Env = overrides.Env };
             return await ResolveApiKeyAsync(provider, synthetic, ct, overrides.Env).ConfigureAwait(false);
@@ -315,9 +315,13 @@ public sealed partial class Models
         }
 
         public async Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
-            => _env.TryGetValue(name, out var value)
-                ? value
-                : await _base.EnvAsync(name, cancellationToken).ConfigureAwait(false);
+        {
+            // pi overlayEnvAuthContext：env[name] || base.env(name)——空串回落 base。
+            var value = _env.TryGetValue(name, out var found) && !string.IsNullOrEmpty(found)
+                ? found
+                : null;
+            return value ?? await _base.EnvAsync(name, cancellationToken).ConfigureAwait(false);
+        }
 
         public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
             => _base.FileExistsAsync(path, cancellationToken);

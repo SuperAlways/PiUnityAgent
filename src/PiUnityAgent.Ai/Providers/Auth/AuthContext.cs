@@ -16,7 +16,9 @@ public sealed class DefaultAuthContext : IAuthContext
     public Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<string?>(Environment.GetEnvironmentVariable(name));
+        var value = Environment.GetEnvironmentVariable(name);
+        // pi defaultProviderAuthContext：空白/空 env 视为 absent。
+        return Task.FromResult<string?>(string.IsNullOrWhiteSpace(value) ? null : value);
     }
 
     public Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)

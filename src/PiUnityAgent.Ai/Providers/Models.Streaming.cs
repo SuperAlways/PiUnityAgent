@@ -21,7 +21,7 @@ public sealed partial class Models
         {
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
-            var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
+            var auth = await ResolveAuthForStreamAsync(model, options).ConfigureAwait(false);
             var applied = ApplyAuthOptions(options, auth);
             applied = ApplyIdentity(applied);
             applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
@@ -47,7 +47,7 @@ public sealed partial class Models
         {
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
-            var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
+            var auth = await ResolveAuthForStreamAsync(model, options).ConfigureAwait(false);
             var applied = ApplyAuthOptions(options, auth);
             applied = ApplyIdentity(applied);
             applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
@@ -65,19 +65,23 @@ public sealed partial class Models
 
     private IProvider RequireProvider(string providerId)
         => GetProvider(providerId)
-           ?? throw new InvalidOperationException($"Unknown provider: {providerId}");
+           ?? throw new ModelsError(ModelsErrorCode.Provider, $"Unknown provider: {providerId}");
 
-    private async Task<AuthResult> ResolveAuthForStreamAsync(
-        Model model, string? suppliedKey, CancellationToken ct)
+    /// <summary>
+    /// pi applyAuth（models.ts）：getAuth(model, { apiKey, env, signal })——
+    /// 请求级 env 参与解析期 overlay，不只是事后合并；未配置文案与 pi 逐字一致。
+    /// </summary>
+    private async Task<AuthResult> ResolveAuthForStreamAsync(Model model, StreamOptions? options)
     {
         var auth = await GetAuthAsync((ProviderModel)model, new AuthResolutionOverrides
         {
-            ApiKey = suppliedKey,
-            Signal = ct,
+            ApiKey = options?.ApiKey,
+            Env = options?.Env,
+            Signal = options?.CancellationToken ?? default,
         }).ConfigureAwait(false);
         if (auth is null)
             throw new ModelsError(ModelsErrorCode.Auth,
-                $"Authentication not configured for provider: {model.Provider}");
+                $"Provider is not configured: {model.Provider}");
         return auth;
     }
 
@@ -88,7 +92,8 @@ public sealed partial class Models
         var env = MergeEnv(auth.Env, options.Env);
         return options with
         {
-            ApiKey = string.IsNullOrEmpty(options.ApiKey) ? auth.Auth.ApiKey : options.ApiKey,
+            // pi：options.apiKey ?? auth.apiKey——空串是显式值，胜过解析结果。
+            ApiKey = options.ApiKey is null ? auth.Auth.ApiKey : options.ApiKey,
             Headers = headers,
             Env = env,
         };
@@ -101,7 +106,7 @@ public sealed partial class Models
         var env = MergeEnv(auth.Env, options.Env);
         return options with
         {
-            ApiKey = string.IsNullOrEmpty(options.ApiKey) ? auth.Auth.ApiKey : options.ApiKey,
+            ApiKey = options.ApiKey is null ? auth.Auth.ApiKey : options.ApiKey,
             Headers = headers,
             Env = env,
         };

@@ -143,6 +143,23 @@ public class AuthShapeTests
         }
     }
 
+    [Fact]
+    public async Task DefaultAuthContext_Blank_Env_Is_Absent()
+    {
+        var context = new DefaultAuthContext();
+        Environment.SetEnvironmentVariable("PI_TEST_BLANK_ENV", "   ");
+        try
+        {
+            // pi defaultProviderAuthContext：空白/空 env 视为 absent（返回 undefined）。
+            Assert.Null(await context.EnvAsync("PI_TEST_BLANK_ENV"));
+            Assert.Null(await context.EnvAsync("PI_TEST_DEFINITELY_UNSET_ENV"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PI_TEST_BLANK_ENV", null);
+        }
+    }
+
     private sealed class TestAuthContext : IAuthContext
     {
         private readonly IReadOnlyDictionary<string, string> _env;
