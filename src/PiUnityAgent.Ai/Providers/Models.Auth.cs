@@ -301,8 +301,10 @@ public sealed partial class Models
     /// <summary>
     /// pi refreshStoredOAuthCredential（auth/resolve.ts:119-152）的 C# 版：在 credential
     /// store 的 modify 锁内刷新，锁内复查 needsRefresh，轮换出的凭据在释放锁前持久化
-    /// （并发/跨进程只刷一次）。锁等待随 <paramref name="cancellationToken"/> 取消；已开始的
-    /// 刷新只受 15s 超时约束（pi 同口径——否则取消会把唯一有效的 refresh token 丢掉）。
+    /// （并发/跨进程只刷一次）。调用方 signal 只取消锁等待（lockWait CTS + 注册转发）；
+    /// 回调第一句即摘掉注册（pi resolve.ts:135-136 removeEventListener）——刷新一旦开始，
+    /// 轮换出的唯一有效 refresh token 必须落库，刷新+持久化对调用方取消免疫、只受 15s 超时
+    /// 约束（pi 同口径，否则取消会把单次使用的 refresh token 丢成死凭据）。
     /// fn 返回 null（期间登出/已被他人刷新）→ 返回 store 现值（pi：next ?? current）。
     /// </summary>
     private async Task<OAuthCredential?> RefreshStoredOAuthCredentialAsync(
@@ -312,10 +314,16 @@ public sealed partial class Models
         CancellationToken cancellationToken)
     {
         Credential? post;
+        // pi resolve.ts:127-130：先注册转发、再补查已取消（注册回调在已取消 token 上同步触发）。
+        var lockWait = new CancellationTokenSource();
+        var registration = cancellationToken.Register(() => lockWait.Cancel());
+        if (cancellationToken.IsCancellationRequested) lockWait.Cancel();
         try
         {
             post = await _credentials.ModifyAsync(providerId, async current =>
             {
+                // pi resolve.ts:135-136 回调前两句：摘监听 + 仍可取消（此刻刷新尚未开始）。
+                registration.Dispose();
                 cancellationToken.ThrowIfCancellationRequested();
                 if (current is not OAuthCredential currentOauth) return null; // 期间已登出
                 if (!needsRefresh(currentOauth)) return null;                 // 其他进程/请求已刷新
@@ -334,7 +342,7 @@ public sealed partial class Models
                     throw new ModelsError(ModelsErrorCode.OAuth,
                         $"OAuth refresh failed for {providerId}", error);
                 }
-            }, new AuthOperationOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+            }, new AuthOperationOptions { CancellationToken = lockWait.Token }).ConfigureAwait(false);
         }
         catch (ModelsError)
         {
@@ -342,12 +350,20 @@ public sealed partial class Models
         }
         catch (OperationCanceledException)
         {
+            // 锁等待取消经 lockWait 转发——还原为调用方自己的 OCE（pi resolve.ts:149 throwIfAborted）。
+            cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
         catch (Exception error)
         {
             throw new ModelsError(ModelsErrorCode.Auth,
                 $"Credential store modify failed for {providerId}", error);
+        }
+        finally
+        {
+            // 回调未开始（取消早于拿锁）时注册仍在——此处兜底；Dispose 均幂等。
+            registration.Dispose();
+            lockWait.Dispose();
         }
 
         return post as OAuthCredential;

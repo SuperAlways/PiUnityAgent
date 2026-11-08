@@ -232,6 +232,72 @@ public sealed class S5AuthIntegrationTests : IDisposable
         Assert.Equal("new-r", rotated.RefreshToken);
     }
 
+    [Fact]
+    public async Task GetAuth_CallerCancel_During_Refresh_Still_Persists_Rotated_Token()
+    {
+        // pi refreshStoredOAuthCredential（resolve.ts:110-114）：刷新一旦开始就只受 15s 超时
+        // 约束——refresh token 是单次使用的，调用方在途取消若把轮换结果丢弃，凭据即死。
+        var mock = new MockFetch();
+        var refreshStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        mock.Enqueue(async (_, _, _) =>
+        {
+            refreshStarted.TrySetResult(true);
+            await releaseRefresh.Task;
+            return (IFetchResponse)new MockFetchResponse(200, Encoding.UTF8.GetBytes(
+                "{\"access_token\":\"new-a\",\"refresh_token\":\"new-r\",\"expires_in\":36000}"));
+        });
+        var store = CreateStore();
+        await StoreOAuth(store, "anthropic", "old-a", "old-r", DateTimeOffset.Now.ToUnixTimeMilliseconds() - 1000);
+        var models = CreateModels(store, AnthropicProvider.Create(mock.Fetch));
+
+        using var callerCts = new CancellationTokenSource();
+        var task = models.GetAuthAsync("anthropic", new AuthResolutionOverrides { Signal = callerCts.Token });
+        await refreshStarted.Task;
+        callerCts.Cancel();               // 刷新 HTTP 在途时调用方放弃
+        releaseRefresh.TrySetResult(true); // 刷新照常完成并轮换
+
+        // 调用方最终仍看到取消（ToAuth 阶段观察 signal），但轮换凭据必须已落库。
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        var reloaded = Assert.IsType<OAuthCredential>(
+            await new FileCredentialStore(_path).ReadAsync("anthropic"));
+        Assert.Equal("new-a", reloaded.AccessToken);
+        Assert.Equal("new-r", reloaded.RefreshToken);
+    }
+
+    [Fact]
+    public async Task GetAuth_CallerCancel_While_Waiting_For_Store_Lock_No_Refresh_No_Write()
+    {
+        // 锁等待随调用方取消（pi：signal 只取消锁等待）：持锁者未放行时取消 →
+        // 刷新未开始（零网络）、store 零写入。
+        var mock = new MockFetch();
+        var store = CreateStore();
+        await StoreOAuth(store, "anthropic", "old-a", "old-r", DateTimeOffset.Now.ToUnixTimeMilliseconds() - 1000);
+        var models = CreateModels(store, AnthropicProvider.Create(mock.Fetch));
+
+        var lockEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = store.ModifyAsync("anthropic", async _ =>
+        {
+            lockEntered.TrySetResult(true);
+            await releaseLock.Task;
+            return (Credential?)null; // 不变更，只为占住 per-provider 锁
+        });
+        await lockEntered.Task;
+
+        using var callerCts = new CancellationTokenSource();
+        var task = models.GetAuthAsync("anthropic", new AuthResolutionOverrides { Signal = callerCts.Token });
+        callerCts.Cancel(); // 持锁者仍占着锁——取消落在锁等待上
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        releaseLock.TrySetResult(true);
+        await holder;
+
+        Assert.Equal(0, mock.CallCount); // 刷新从未开始
+        Assert.Equal("old-r",
+            Assert.IsType<OAuthCredential>(await store.ReadAsync("anthropic")).RefreshToken);
+    }
+
     // ------------------------------------------------------------------
     // profile OAuth 边界：有 fetch 才挂 OAuth
     // ------------------------------------------------------------------
