@@ -458,6 +458,16 @@ public static class GroqProvider
 | `retryAssistantCall` | 上层 agent 重试 | 上层 | S4 不实现 | C | S4 只做 provider 首字节前重试 |
 | transcript 完整重放 | S9 | S9 | S4 只 normalize | C/D11 | S9 承接 D11 |
 | 图片/分类 | S4/S5 范围外 | 有 | 不做 | C/D4/D5 | 2B 后置 |
+| ProviderRetry 无状态码错误 | 无 statusCode 一律重试（含 TLS/DNS；`provider-retry.ts:30`） | 同 | 仅 `Kind == Connect` 或传输层 `IsRetryable` 重试（`Api/ProviderRetry.cs:55-56`） | D | 尊重 UnityLlmTransport 的显式 `IsRetryable=false`，避免对永久性 TLS/代理/协议配置错误空转；代价=TLS 故障少一次自愈机会；`ProviderRetryTests` 锁定 |
+| `ToolCallArguments` 修复 JSON | `parseJsonWithRepair` 先原样 parse，失败后 `repairJson` 再试（`utils/json-parse.ts:33-120`） | 同 | `Finish()` 只做一次 `JsonNode.Parse`；可修复的裸控制字符/非法转义落 ArgumentsError（`Api/ToolCallArguments.cs:33-46`） | C | 最小端口；畸形参数可救的调用判失败；repairJson 端口归后续（不改变形状） |
+| `GetClientVersion` 版本源 | `PI_AI_VERSION="1.5.0"`（`utils/version.ts:2`） | — | identity.Version 优先，缺省 Ai 程序集 Major.Minor.Build（`Types/ClientIdentityHelpers.cs:26-34`） | A/B | C# 无 PI_AI_VERSION 常量；代价=UA 版本段随构建版本漂移 |
+| Responses 错误文案前缀 | `OpenAI API error (400): …`（`openai-responses.ts:253-256`） | — | `400: …`（`OpenAiResponses.cs:243`） | B/低 | 纯文案差异；completions 侧 pi 本无前缀，S4 两侧统一 |
+| `Usage.Reasoning` 缺省 | 恒数值（`|| 0`） | 恒 0 | 未上报时 null（`OpenAiCompletions.cs:2672`、`OpenAiResponses.cs:1463-1464`） | D/低 | S3 `Usage.Reasoning` 为 int?；代价=终止消息少 `reasoning:0` 键 |
+| ModelCatalog 缺资源 | 编译期数据；pi.net 缺 JSON 抛 FileNotFoundException | — | 缺嵌入资源返回空表（`Providers/ModelCatalog.cs:27`） | B/低 | 拼错 providerId 得到空目录，排障更隐蔽；`S4ProviderProfileTests` 锁定 unknown→empty |
+| ModelCatalog `promptCache` | `Model.promptCache` 数据 | JSON 可含 | 解析器不填充 `Model.PromptCache`（`Providers/ModelCatalog.cs:50-132`） | C/低 | 当前 12 份 JSON 无此键；接入含 promptCache 的目录数据时补 |
+| `x-should-retry` 头比较 | 精确 `"true"/"false"`（`provider-retry.ts:26-28`） | — | `OrdinalIgnoreCase`（`Api/ProviderRetry.cs:51-52`） | B/低 | `"True"` 会识别、pi 落 status 判定；可后续改 Ordinal |
+| retry-after 解析宽容度 | `Number.parseFloat` 前缀取数（`provider-retry.ts:56`） | — | `double.TryParse` 全串；无时区 HTTP 日期 `AssumeUniversal`（`Api/ProviderRetry.cs:79-99`） | B/低 | 尾随垃圾落指数退避；常见 GMT 形态一致 |
+| `ClientIdentity` attribution 哨兵 | Plain JSON 可持久化，`attribution:null` 显式关闭 | — | `AttributionSet` 私有哨兵不可 STJ 往返（`Types/ClientIdentity.cs`） | C/低 | S4 不持久化 identity；D7 持久化时补 |
 
 > 本表是**待审计声明**，不是真相源；S4 审计必须回到 pi/pi.net 源码核对。
 
