@@ -12,11 +12,16 @@ public sealed partial class Models
     private readonly Dictionary<string, IProvider> _providers = new(StringComparer.Ordinal);
     private readonly CredentialStore _credentials;
     private readonly IAuthContext _authContext;
+    private readonly IModelsStore _modelsStore;
 
-    public Models(CredentialStore? credentials = null, IAuthContext? authContext = null)
+    public Models(
+        CredentialStore? credentials = null,
+        IAuthContext? authContext = null,
+        IModelsStore? modelsStore = null)
     {
         _credentials = credentials ?? new InMemoryCredentialStore();
         _authContext = authContext ?? new DefaultAuthContext();
+        _modelsStore = modelsStore ?? new InMemoryModelsStore();
     }
 
     public void SetProvider(IProvider provider)
