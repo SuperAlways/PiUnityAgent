@@ -1166,6 +1166,155 @@ public class AnthropicMessagesTests
         Assert.Equal(6.0 / 1_000_000 * done.Message.Usage.Input, done.Message.Usage.Cost.Input, 12);
     }
 
+    // ------------------------------------------------------------------
+    // OpenRouter message_delta 报价覆盖（pi anthropic-messages.ts:881–888 → openrouter-cost.ts）
+    // ------------------------------------------------------------------
+
+    /// <summary>OpenRouter 目录价模型：10 input + 5 output = 0.01 + 0.01 = 0.02。</summary>
+    private static Model OpenRouterModel()
+        => CreateModel("https://openrouter.ai/api/v1") with
+        {
+            Provider = "openrouter",
+            Cost = new ModelCost(1000, 2000),
+        };
+
+    [Fact]
+    public async Task OpenRouter_Reported_Cost_Overrides_Catalog_Total()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = 0.0042,
+                ["is_byok"] = false,
+            }),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            OpenRouterModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // 非 BYOK：实付直接覆盖目录价总价，并标记 totalFromProvider（pi openrouter-cost.ts:32–36）。
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(0.0042, done.Message.Usage.Cost.Total, 12);
+        Assert.True(done.Message.Usage.Cost.TotalFromProvider);
+        // 覆盖只动 Cost，token 计数保持 pi message_delta 常规更新。
+        Assert.Equal(15, done.Message.Usage.TotalTokens);
+    }
+
+    [Fact]
+    public async Task OpenRouter_Byok_Cost_Adds_Upstream_Inference_Cost()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = 0.1,
+                ["is_byok"] = true,
+                ["cost_details"] = new JsonObject { ["upstream_inference_cost"] = 0.9 },
+            }),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            OpenRouterModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // BYOK：上报 cost 只含 OpenRouter 自己的费用，总价 = cost + 上游推理成本（pi openrouter-cost.ts:38–53）。
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(1.0, done.Message.Usage.Cost.Total, 12);
+        Assert.True(done.Message.Usage.Cost.TotalFromProvider);
+    }
+
+    [Fact]
+    public async Task OpenRouter_Byok_Cost_Falls_Back_To_Upstream_Components()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = 0.1,
+                ["is_byok"] = true,
+                ["cost_details"] = new JsonObject
+                {
+                    ["upstream_inference_prompt_cost"] = 0.3,
+                    ["upstream_inference_completions_cost"] = 0.6,
+                },
+            }),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            OpenRouterModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // upstream_inference_cost 缺失时用 prompt + completions 两项之和（0.3 + 0.6 = 0.9 → 总价 1.0）。
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(1.0, done.Message.Usage.Cost.Total, 12);
+        Assert.True(done.Message.Usage.Cost.TotalFromProvider);
+    }
+
+    [Fact]
+    public async Task Non_OpenRouter_Provider_Keeps_Catalog_Total()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = 0.0042,
+                ["is_byok"] = false,
+            }),
+            MessageStop()), headers: SseHeaders());
+
+        // provider 与 baseUrl 都不命中 openrouter：同样的成本字段不得改总价（pi isOpenRouterModel 门）。
+        var model = CreateModel() with { Cost = new ModelCost(1000, 2000) };
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            model, Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        var done = Assert.IsType<AssistantMessageEvent.Done>(events[^1]);
+        Assert.Equal(0.02, done.Message.Usage.Cost.Total, 12);
+        Assert.False(done.Message.Usage.Cost.TotalFromProvider);
+    }
+
+    [Fact]
+    public async Task OpenRouter_Incomplete_Reported_Cost_Keeps_Catalog_Total()
+    {
+        // 负数 cost 不合法（pi isValidCost）；is_byok 缺失时两分支都不命中——两者都保持目录价。
+        var negativeFetch = new MockFetch();
+        negativeFetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = -1,
+                ["is_byok"] = false,
+            }),
+            MessageStop()), headers: SseHeaders());
+        var negativeEvents = await CollectAsync(AnthropicMessages.Stream(
+            OpenRouterModel(), Context(UserMsg("hi")), CreateOptions(negativeFetch)));
+        var negativeDone = Assert.IsType<AssistantMessageEvent.Done>(negativeEvents[^1]);
+        Assert.Equal(0.02, negativeDone.Message.Usage.Cost.Total, 12);
+        Assert.False(negativeDone.Message.Usage.Cost.TotalFromProvider);
+
+        var missingByokFetch = new MockFetch();
+        missingByokFetch.EnqueueText(AnthropicSse(
+            MessageStart(usage: new JsonObject { ["input_tokens"] = 10, ["output_tokens"] = 0 }),
+            MessageDelta("end_turn", new JsonObject
+            {
+                ["output_tokens"] = 5,
+                ["cost"] = 0.0042,
+            }),
+            MessageStop()), headers: SseHeaders());
+        var missingByokEvents = await CollectAsync(AnthropicMessages.Stream(
+            OpenRouterModel(), Context(UserMsg("hi")), CreateOptions(missingByokFetch)));
+        var missingByokDone = Assert.IsType<AssistantMessageEvent.Done>(missingByokEvents[^1]);
+        Assert.Equal(0.02, missingByokDone.Message.Usage.Cost.Total, 12);
+        Assert.False(missingByokDone.Message.Usage.Cost.TotalFromProvider);
+    }
+
     [Fact]
     public async Task Stop_Reason_Map()
     {

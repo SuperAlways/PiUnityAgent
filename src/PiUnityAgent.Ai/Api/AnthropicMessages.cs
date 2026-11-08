@@ -175,8 +175,12 @@ public static class AnthropicMessages
                 var built = BuildParamsForRequest(
                     model, normalizedContext, isOAuth, options, compat, disablePreferredStrictTools);
                 // pi anthropic-messages.ts:654：effort-message 模式的当前 effort 记到回复快照，
-                // 下一回合 ConvertMessagesCore 靠它重放历史 effort 标记。
-                output.ProviderThinkingLevel = built.ProviderThinkingLevel;
+                // 下一回合 ConvertMessagesCore 靠它重放历史 effort 标记。只在有值时覆盖（pi truthy），
+                // 无 effort 模式不得把已有值抹成空。
+                if (built.ProviderThinkingLevel is not null)
+                {
+                    output.ProviderThinkingLevel = built.ProviderThinkingLevel;
+                }
                 JsonNode payload = built.Params;
                 if (options?.OnPayload is { } onPayload)
                 {
@@ -705,7 +709,8 @@ public static class AnthropicMessages
                         }
                     }
 
-                    if (JsonObj(@event, "usage") is { } usage)
+                    var deltaUsage = JsonObj(@event, "usage");
+                    if (deltaUsage is not null)
                     {
                         // 只更新带上来的字段：代理可能在 message_delta 省略 input/cache，message_start 的值站住。
                         var current = output.Usage;
@@ -715,35 +720,35 @@ public static class AnthropicMessages
                         var cacheWrite = current.CacheWrite;
                         var cacheWrite1h = current.CacheWrite1h;
                         var reasoning = current.Reasoning;
-                        if (usage["input_tokens"] is not null)
+                        if (deltaUsage["input_tokens"] is not null)
                         {
-                            input = (int)(JsonNum(usage, "input_tokens") ?? 0);
+                            input = (int)(JsonNum(deltaUsage, "input_tokens") ?? 0);
                         }
 
-                        if (usage["output_tokens"] is not null)
+                        if (deltaUsage["output_tokens"] is not null)
                         {
-                            outputTokens = (int)(JsonNum(usage, "output_tokens") ?? 0);
+                            outputTokens = (int)(JsonNum(deltaUsage, "output_tokens") ?? 0);
                         }
 
-                        if (usage["cache_read_input_tokens"] is not null)
+                        if (deltaUsage["cache_read_input_tokens"] is not null)
                         {
-                            cacheRead = (int)(JsonNum(usage, "cache_read_input_tokens") ?? 0);
+                            cacheRead = (int)(JsonNum(deltaUsage, "cache_read_input_tokens") ?? 0);
                         }
 
-                        if (usage["cache_creation_input_tokens"] is not null)
+                        if (deltaUsage["cache_creation_input_tokens"] is not null)
                         {
-                            cacheWrite = (int)(JsonNum(usage, "cache_creation_input_tokens") ?? 0);
+                            cacheWrite = (int)(JsonNum(deltaUsage, "cache_creation_input_tokens") ?? 0);
                         }
 
                         // Vercel AI Gateway 等会把 TTL 细分放进 delta usage（SDK 类型只在 message_start 有）。
-                        var cacheCreation = JsonObj(usage, "cache_creation");
+                        var cacheCreation = JsonObj(deltaUsage, "cache_creation");
                         if (cacheCreation?["ephemeral_1h_input_tokens"] is not null)
                         {
                             cacheWrite1h = (int)(JsonNum(cacheCreation, "ephemeral_1h_input_tokens") ?? 0);
                         }
 
                         // Anthropic 把 reasoning tokens 报成 output 的子集。
-                        var thinkingTokens = JsonNum(JsonObj(usage, "output_tokens_details"), "thinking_tokens");
+                        var thinkingTokens = JsonNum(JsonObj(deltaUsage, "output_tokens_details"), "thinking_tokens");
                         if (thinkingTokens is not null)
                         {
                             reasoning = (int)thinkingTokens;
@@ -770,6 +775,16 @@ public static class AnthropicMessages
                     {
                         Cost = ModelOperations.CalculateCost(usageModel, output.Usage),
                     };
+
+                    // OpenRouter 在这条 message_delta 的 usage 里附带实际账户计费（cost/is_byok/cost_details
+                    // ——OpenAPI schema 与 Anthropic SDK 均不声明，只能从原始 JSON 读）。命中即用实付覆盖
+                    // 目录价总价，并标记 totalFromProvider（pi anthropic-messages.ts:881–888 →
+                    // openrouter-cost.ts applyOpenRouterReportedCost）。
+                    if (deltaUsage is not null && IsOpenRouterModel(model))
+                    {
+                        output.Usage = ApplyOpenRouterReportedCost(output.Usage, deltaUsage);
+                    }
+
                     break;
                 }
 
@@ -3034,6 +3049,57 @@ public static class AnthropicMessages
                 Diagnostics = Diagnostics.Count > 0 ? Diagnostics.ToList() : null,
                 Timestamp = Timestamp,
             };
+    }
+
+    // ---------------------------------------------------------------------
+    // OpenRouter 报价覆盖（pi utils/openrouter-cost.ts）
+    // ---------------------------------------------------------------------
+
+    /// <summary>provider 是 openrouter，或 baseUrl 指向它（pi isOpenRouterModel，openrouter-cost.ts:24）。</summary>
+    private static bool IsOpenRouterModel(Model model)
+        => model.Provider == "openrouter" || model.BaseUrl.Contains("openrouter.ai", StringComparison.Ordinal);
+
+    /// <summary>合法的计费值：有限且非负（pi isValidCost，openrouter-cost.ts:20）。</summary>
+    private static bool IsValidCost(double? value)
+        => value is { } cost && double.IsFinite(cost) && cost >= 0;
+
+    /// <summary>
+    /// 响应带完整、合法的 OpenRouter 账户计费时，用实付覆盖按目录价算出的总价并标记
+    /// <see cref="UsageCost.TotalFromProvider"/>（pi applyOpenRouterReportedCost，openrouter-cost.ts:29–55）：
+    /// 非 BYOK 直接用 <c>cost</c>；BYOK 的上报值只含 OpenRouter 自己的费用，还要加上游推理成本
+    /// （<c>upstream_inference_cost</c> 缺失时用 <c>upstream_inference_prompt_cost +
+    /// upstream_inference_completions_cost</c>）；<c>is_byok</c> 缺失或数值不合法（负数/非有限）时不动用量。
+    /// </summary>
+    private static Usage ApplyOpenRouterReportedCost(Usage usage, JsonObject reported)
+    {
+        if (!IsValidCost(JsonNum(reported, "cost"))) return usage;
+        var cost = JsonNum(reported, "cost")!.Value;
+
+        var isByok = reported["is_byok"] is JsonValue byokValue && byokValue.TryGetValue<bool>(out var byok)
+            ? byok
+            : (bool?)null;
+        if (isByok == false)
+        {
+            return usage with { Cost = usage.Cost with { Total = cost, TotalFromProvider = true } };
+        }
+
+        if (isByok == true)
+        {
+            if (JsonObj(reported, "cost_details") is not { } costDetails) return usage;
+            double? upstreamCost = JsonNum(costDetails, "upstream_inference_cost");
+            if (upstreamCost is null)
+            {
+                var promptCost = JsonNum(costDetails, "upstream_inference_prompt_cost");
+                var completionsCost = JsonNum(costDetails, "upstream_inference_completions_cost");
+                if (!IsValidCost(promptCost) || !IsValidCost(completionsCost)) return usage;
+                upstreamCost = promptCost!.Value + completionsCost!.Value;
+            }
+
+            if (!IsValidCost(upstreamCost)) return usage;
+            return usage with { Cost = usage.Cost with { Total = cost + upstreamCost.Value, TotalFromProvider = true } };
+        }
+
+        return usage;
     }
 
     // ---------------------------------------------------------------------
