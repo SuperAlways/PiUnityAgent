@@ -47,7 +47,7 @@ public class ModelsAuthTests
             ExpiresAt = long.MaxValue,
         };
         await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(oauthCredential));
-        var models = new Models(store);
+        var models = new Models(new CreateModelsOptions { Credentials = store });
         models.SetProvider(ProviderTestSupport.CreateProvider(
             auth: new ProviderAuth
             {
@@ -143,7 +143,7 @@ public class ModelsAuthTests
         var store = new InMemoryCredentialStore();
         await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
             new OAuthCredential { RefreshToken = "r", AccessToken = "a", ExpiresAt = long.MaxValue }));
-        var models = new Models(store);
+        var models = new Models(new CreateModelsOptions { Credentials = store });
         models.SetProvider(ProviderTestSupport.CreateProvider(
             auth: new ProviderAuth
             {
@@ -243,7 +243,7 @@ public class ModelsAuthTests
         var store = new InMemoryCredentialStore();
         await store.ModifyAsync("p1", _ => Task.FromResult<Credential?>(
             new ApiKeyCredential("store-key")));
-        var models = new Models(store);
+        var models = new Models(new CreateModelsOptions { Credentials = store });
         models.SetProvider(ProviderTestSupport.CreateProvider(
             auth: new ProviderAuth
             {

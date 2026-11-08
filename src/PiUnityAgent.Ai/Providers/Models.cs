@@ -6,6 +6,17 @@ using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Providers;
 
+/// <summary>
+/// pi CreateModelsOptions：Models 门面的构造选项；全部可空，缺省即内存实现（D；等价于 new Models(null)）。
+/// </summary>
+public sealed record CreateModelsOptions
+{
+    public CredentialStore? Credentials { get; init; }
+    public IModelsStore? ModelsStore { get; init; }
+    public IAuthContext? AuthContext { get; init; }
+    public ClientIdentity? Identity { get; init; }
+}
+
 public sealed partial class Models
 {
     private readonly object _gate = new();
@@ -13,16 +24,18 @@ public sealed partial class Models
     private readonly CredentialStore _credentials;
     private readonly IAuthContext _authContext;
     private readonly IModelsStore _modelsStore;
+    private readonly ClientIdentity? _identity;
 
-    public Models(
-        CredentialStore? credentials = null,
-        IAuthContext? authContext = null,
-        IModelsStore? modelsStore = null)
+    public Models(CreateModelsOptions? options = null)
     {
-        _credentials = credentials ?? new InMemoryCredentialStore();
-        _authContext = authContext ?? new DefaultAuthContext();
-        _modelsStore = modelsStore ?? new InMemoryModelsStore();
+        _credentials = options?.Credentials ?? new InMemoryCredentialStore();
+        _modelsStore = options?.ModelsStore ?? new InMemoryModelsStore();
+        _authContext = options?.AuthContext ?? new DefaultAuthContext();
+        _identity = options?.Identity;
     }
+
+    /// <summary>pi Models.identity：门面级客户端身份；请求级 identity 逐字段覆盖它。</summary>
+    public ClientIdentity? Identity => _identity;
 
     public void SetProvider(IProvider provider)
     {

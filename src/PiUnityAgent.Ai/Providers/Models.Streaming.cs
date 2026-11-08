@@ -22,9 +22,11 @@ public sealed partial class Models
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
             var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
-            options = ApplyAuthOptions(options, auth);
+            var applied = ApplyAuthOptions(options, auth);
+            applied = ApplyIdentity(applied);
+            applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
             var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
-            return provider.Stream(requestModel, transcript, options);
+            return provider.Stream(requestModel, transcript, applied with { TransformHeaders = null });
         });
     }
 
@@ -46,9 +48,11 @@ public sealed partial class Models
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
             var auth = await ResolveAuthForStreamAsync(model, options?.ApiKey, ct).ConfigureAwait(false);
-            options = ApplyAuthOptions(options, auth);
+            var applied = ApplyAuthOptions(options, auth);
+            applied = ApplyIdentity(applied);
+            applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
             var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
-            return provider.StreamSimple(requestModel, transcript, options);
+            return provider.StreamSimple(requestModel, transcript, applied with { TransformHeaders = null });
         });
     }
 
@@ -101,6 +105,44 @@ public sealed partial class Models
             Headers = headers,
             Env = env,
         };
+    }
+
+    /// <summary>pi 门面级 identity 与请求级 identity 逐字段合并（请求级覆盖门面级）。</summary>
+    private StreamOptions ApplyIdentity(StreamOptions options)
+    {
+        var identity = ClientIdentityMerger.Merge(_identity, options.Identity);
+        return identity is null ? options : options with { Identity = identity };
+    }
+
+    private SimpleStreamOptions ApplyIdentity(SimpleStreamOptions options)
+    {
+        var identity = ClientIdentityMerger.Merge(_identity, options.Identity);
+        return identity is null ? options : options with { Identity = identity };
+    }
+
+    /// <summary>pi transformHeaders：进 provider 前执行一次并清除；provider 不感知该字段。</summary>
+    private static async Task<StreamOptions> ApplyTransformHeaders(
+        StreamOptions options,
+        CancellationToken cancellationToken)
+    {
+        var transform = options.TransformHeaders;
+        if (transform is null) return options;
+        cancellationToken.ThrowIfCancellationRequested();
+        var headers = await transform(options.Headers ?? new Dictionary<string, string?>())
+            .ConfigureAwait(false);
+        return options with { Headers = headers, TransformHeaders = null };
+    }
+
+    private static async Task<SimpleStreamOptions> ApplyTransformHeaders(
+        SimpleStreamOptions options,
+        CancellationToken cancellationToken)
+    {
+        var transform = options.TransformHeaders;
+        if (transform is null) return options;
+        cancellationToken.ThrowIfCancellationRequested();
+        var headers = await transform(options.Headers ?? new Dictionary<string, string?>())
+            .ConfigureAwait(false);
+        return options with { Headers = headers, TransformHeaders = null };
     }
 
     private static IReadOnlyDictionary<string, string?>? MergeHeaders(
