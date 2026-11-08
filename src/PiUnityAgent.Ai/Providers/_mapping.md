@@ -74,3 +74,17 @@
 | pi `utils/identity.ts` | `Types/ClientIdentityHelpers.cs` | `FormatUserAgent`/`GetClientVersion`/`GetAttributionHeaders`/`GetIdentityHeaders`/`ClientIdentityTarget`；UA 版本用 Ai 程序集版本、runtime 段恒 `(browser)`（偏离登记 S4 spec §10） |
 
 > 8 家 family 的 id/baseUrl/env 逐一核对 pi `packages/ai/src/providers/*.ts`（Task 7）；profile 只封装 baseUrl/auth/models，不实现 SSE/JSON 解析（spec §3.1 边界）。
+
+## S5 新增映射（Anthropic/Google 协议 + 7 家 profile）
+
+| 上游 | 我们 | 说明 |
+|---|---|---|
+| pi `providers/anthropic.ts` | `AnthropicProvider.cs` | `Create()`：anthropic / `https://api.anthropic.com` / `AnthropicMessages.Streams()`；认证链=stored key → `ANTHROPIC_AUTH_TOKEN`（`Authorization: Bearer` 头，source=env 名）→ `ANTHROPIC_OAUTH_TOKEN` → `ANTHROPIC_API_KEY`（按序、空串跳过）；login 走 Secret prompt |
+| pi `providers/anthropic.ts:53-69`（federation） | —— 后置 | 工作负载身份联合（三必需 env + 两可选收进 `AuthResult.Env`）未实现，源码留 `TODO(S5,D1)` |
+| pi `auth/oauth/load.ts` + `lazyOAuth`（anthropic） | —— Task 6 | `Auth.OAuth`（Claude Pro/Max，isSubscription）在 D1 任务接 `LazyOAuth`；本任务 profile 钉死无 OAuth |
+| pi `providers/minimax.ts` + `minimax-cn.ts` | `MinimaxProvider.cs` | `Create()`/`CreateCn()`：minimax（api.minimax.io/anthropic）/ minimax-cn（api.minimaxi.com/anthropic）；`MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`；AnthropicMessages |
+| pi `providers/google.ts` | `GoogleProvider.cs` | google / `https://generativelanguage.googleapis.com/v1beta` / `GEMINI_API_KEY` / `GoogleGenerativeAi.Streams()` |
+| pi `providers/fireworks.ts` | `FireworksProvider.cs` | fireworks / `https://api.fireworks.ai/inference` / `FIREWORKS_API_KEY`；`ApiByApi`：anthropic-messages + openai-completions 按 model.Api 分派（openai 组模型自带 `/v1` 后缀 baseUrl，照搬数据） |
+| pi `providers/vercel-ai-gateway.ts` | `VercelAiGatewayProvider.cs` | vercel-ai-gateway / `https://ai-gateway.vercel.sh` / `AI_GATEWAY_API_KEY` / AnthropicMessages；typesafe-system-one 分类后置（D5，spec §10） |
+| pi `providers/openrouter.ts` | `OpenRouterProvider.cs` | openrouter / `https://openrouter.ai/api/v1` / `OPENROUTER_API_KEY`；`ApiByApi` 双协议；OAuth（Task 6/D1）、openrouter-images（D4）、typesafe 分类（D5）、`GET /models/user` 目录个性化（C 偏离，Task 7 审计登记）均后置；归属/身份头不设 provider 级——走应用级 `ClientIdentity` |
+| pi.net `ModelData/{7 份}.json` | `ModelData/` | anthropic(17)/minimax(4)/minimax-cn(4)/google(23)/fireworks(19+10)/vercel-ai-gateway(302 chat,14 classifier 不进)/openrouter(19+370 chat,63 image+33 classifier 不进)，与 pi.net `src/Pi.Ai/ModelData/` 逐字节一致；`ModelCatalog` 零改动即消费 |
