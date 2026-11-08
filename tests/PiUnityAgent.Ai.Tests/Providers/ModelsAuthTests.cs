@@ -454,29 +454,6 @@ public class ModelsAuthTests
         Assert.Empty(result.Errors);
     }
 
-    [Fact]
-    public void Login_Is_Deferred_To_S5()
-    {
-        var models = new Models();
-        var exception = Assert.Throws<NotSupportedException>(() =>
-        {
-            _ = models.LoginAsync("p1", AuthType.OAuth, new NoOpInteraction());
-        });
-
-        Assert.Contains("S5", exception.Message);
-        Assert.Contains("D1", exception.Message);
-    }
-
-    private sealed class NoOpInteraction : AuthInteraction
-    {
-        public Task<string> PromptAsync(AuthPrompt prompt, CancellationToken cancellationToken = default)
-            => Task.FromResult(string.Empty);
-
-        public void Notify(AuthEvent @event)
-        {
-        }
-    }
-
     private sealed class StaticEnvAuthContext(IReadOnlyDictionary<string, string> env) : IAuthContext
     {
         public Task<string?> EnvAsync(string name, CancellationToken cancellationToken = default)

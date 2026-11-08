@@ -10,6 +10,12 @@ namespace PiUnityAgent.Ai.Providers;
 
 public sealed partial class Models
 {
+    /// <summary>pi DEFAULT_OAUTH_MINIMUM_VALIDITY_MS（auth/resolve.ts）：剩余不足五分钟即刷新。</summary>
+    private const long DefaultOAuthMinimumValidityMs = 5 * 60 * 1000;
+
+    /// <summary>pi DEFAULT_OAUTH_REFRESH_TIMEOUT_MS：已开始的刷新只受 15s 超时约束。</summary>
+    private const int DefaultOAuthRefreshTimeoutMs = 15_000;
+
     public async Task<AuthResult?> GetAuthAsync(
         string providerId,
         AuthResolutionOverrides? overrides = null)
@@ -244,8 +250,112 @@ public sealed partial class Models
     }
 
     /// <summary>
+    /// pi resolveStoredOAuth（auth/resolve.ts:153-191）的 C# 版：剩余有效期不足
+    /// <see cref="DefaultOAuthMinimumValidityMs"/>（或显式 minOAuthValidityMs）即进
+    /// store 锁刷新（双检：锁内复查，已被他人刷新/期间登出 → null），刷新结果已持久化；
+    /// 显式要求 minOAuthValidityMs 而刷新后仍不够 → ModelsError(OAuth)。之后 ToAuth。
+    /// </summary>
+    private async Task<AuthResult?> ResolveStoredOAuthAsync(
+        IProvider provider,
+        OAuthAuth oauth,
+        OAuthCredential stored,
+        AuthResolutionOverrides? overrides,
+        CancellationToken ct)
+    {
+        var minimumValidityMs = Math.Max(DefaultOAuthMinimumValidityMs, overrides?.MinOAuthValidityMs ?? 0);
+        bool ExpiresSoon(OAuthCredential credential) => NowMs() + minimumValidityMs >= credential.ExpiresAt;
+        var credential = stored;
+
+        if (ExpiresSoon(credential))
+        {
+            // 乐观检查说已过期；权威检查在 store 锁内运行。
+            var post = await RefreshStoredOAuthCredentialAsync(provider.Id, oauth, ExpiresSoon, ct)
+                .ConfigureAwait(false);
+            if (post is null) return null; // 期间已登出
+            credential = post;
+            // 常规五分钟窗口触发刷新但不构成 provider 契约；显式调用方（如 bearer-token 导出）
+            // 刷新后才要求请求的最小有效期。
+            if (overrides?.MinOAuthValidityMs is not null && ExpiresSoon(credential))
+            {
+                throw new ModelsError(ModelsErrorCode.OAuth,
+                    $"OAuth refresh returned a token that expires too soon for {provider.Id}");
+            }
+        }
+
+        try
+        {
+            var modelAuth = await oauth.ToAuth(credential, ct).ConfigureAwait(false);
+            return new AuthResult(modelAuth, null, "OAuth");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.OAuth,
+                $"OAuth auth derivation failed for provider {provider.Id}", error);
+        }
+    }
+
+    /// <summary>
+    /// pi refreshStoredOAuthCredential（auth/resolve.ts:119-152）的 C# 版：在 credential
+    /// store 的 modify 锁内刷新，锁内复查 needsRefresh，轮换出的凭据在释放锁前持久化
+    /// （并发/跨进程只刷一次）。锁等待随 <paramref name="cancellationToken"/> 取消；已开始的
+    /// 刷新只受 15s 超时约束（pi 同口径——否则取消会把唯一有效的 refresh token 丢掉）。
+    /// fn 返回 null（期间登出/已被他人刷新）→ 返回 store 现值（pi：next ?? current）。
+    /// </summary>
+    private async Task<OAuthCredential?> RefreshStoredOAuthCredentialAsync(
+        string providerId,
+        OAuthAuth oauth,
+        Func<OAuthCredential, bool> needsRefresh,
+        CancellationToken cancellationToken)
+    {
+        Credential? post;
+        try
+        {
+            post = await _credentials.ModifyAsync(providerId, async current =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (current is not OAuthCredential currentOauth) return null; // 期间已登出
+                if (!needsRefresh(currentOauth)) return null;                 // 其他进程/请求已刷新
+                try
+                {
+                    using var refreshTimeout = new CancellationTokenSource(
+                        TimeSpan.FromMilliseconds(DefaultOAuthRefreshTimeoutMs));
+                    return await oauth.Refresh(currentOauth, refreshTimeout.Token).ConfigureAwait(false);
+                }
+                catch (ModelsError)
+                {
+                    throw;
+                }
+                catch (Exception error)
+                {
+                    throw new ModelsError(ModelsErrorCode.OAuth,
+                        $"OAuth refresh failed for {providerId}", error);
+                }
+            }, new AuthOperationOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+        }
+        catch (ModelsError)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"Credential store modify failed for {providerId}", error);
+        }
+
+        return post as OAuthCredential;
+    }
+
+    /// <summary>
     /// pi resolveRefreshCredential（models.ts:627-654）的 C# 等价：
-    /// stored OAuth 且 provider 支持 OAuth → 未过期原样使用（过期视为无有效凭据，跳过网络）；
+    /// stored OAuth 且 provider 支持 OAuth → 未过期原样使用，过期则锁内刷新并持久化轮换凭据；
     /// 其余走 provider ApiKey.Resolve（带 stored ApiKeyCredential 或 null），解析出结果即合成
     /// 仅含 key/env 的有效凭据；解析不出 → null（调用方跳过网络阶段）。错误原样上抛。
     /// </summary>
@@ -256,10 +366,13 @@ public sealed partial class Models
     {
         if (stored is OAuthCredential oauth)
         {
-            if (provider.Auth?.OAuth is null) return null;
-            // TODO(S5,D1): 过期 OAuth 应走 oauth.refresh 轮换并持久化（pi refreshStoredOAuthCredential，
-            // models.ts:638-645），轮换出的新凭据由下一次 refresh 读到；当前过期即跳过网络阶段。
-            return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < oauth.ExpiresAt ? oauth : null;
+            var handler = provider.Auth?.OAuth;
+            if (handler is null) return null;
+            if (NowMs() < oauth.ExpiresAt) return oauth;
+            if (ct.IsCancellationRequested) return null;
+            // 已开始的刷新不受取消/被后继刷新取代影响——轮换出的 refresh token 一定被持久化。
+            return await RefreshStoredOAuthCredentialAsync(
+                provider.Id, handler, current => NowMs() >= current.ExpiresAt, ct).ConfigureAwait(false);
         }
 
         var apiKey = provider.Auth?.ApiKey;
@@ -271,6 +384,8 @@ public sealed partial class Models
             ? null
             : new ApiKeyCredential(result.Auth.ApiKey) { Env = result.Env };
     }
+
+    private static long NowMs() => DateTimeOffset.Now.ToUnixTimeMilliseconds();
 
     /// <summary>
     /// pi publishProviderModels（models.ts:517-542）的顺序化等价：
@@ -296,12 +411,81 @@ public sealed partial class Models
         return true;
     }
 
-    public Task<Credential> LoginAsync(
+    /// <summary>
+    /// pi Models.login（models.ts:775-830）的顺序化 C# 版：解析 provider → 校验该类型有 login →
+    /// 走 provider login 取凭据 → 写入 credential store（锁等待随 ct 取消）。pi 的
+    /// abort-竞速（mutation-started 侦听）在顺序流下退化为：store 失败包
+    /// ModelsError(Auth)，取消原样上抛。返回值是 login 产出（pi 同）。
+    /// </summary>
+    public async Task<Credential> LoginAsync(
         string providerId,
         AuthType type,
         AuthInteraction interaction,
-        LoginOptions? options = null)
-        => throw new NotSupportedException("Deferred to S5: interactive login (D1)");
+        LoginOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var provider = GetProvider(providerId)
+            ?? throw new ModelsError(ModelsErrorCode.Provider, $"Unknown provider: {providerId}");
+
+        var credential = type == AuthType.OAuth
+            ? (Credential)await LoginOAuthAsync(provider, interaction, options, cancellationToken).ConfigureAwait(false)
+            : await LoginApiKeyAsync(provider, interaction, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await _credentials.ModifyAsync(
+                providerId,
+                _ => Task.FromResult<Credential?>(credential),
+                new AuthOperationOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"Credential store modify failed for {providerId}", error);
+        }
+
+        return credential;
+    }
+
+    private static async Task<OAuthCredential> LoginOAuthAsync(
+        IProvider provider,
+        AuthInteraction interaction,
+        LoginOptions? options,
+        CancellationToken cancellationToken)
+    {
+        var oauth = provider.Auth?.OAuth
+            ?? throw new ModelsError(ModelsErrorCode.Auth,
+                $"{provider.Name} does not support {AuthTypeName(AuthType.OAuth)} login");
+        return await oauth.Login(
+            new ProviderAuthInteraction(interaction, cancellationToken), options, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<ApiKeyCredential> LoginApiKeyAsync(
+        IProvider provider,
+        AuthInteraction interaction,
+        CancellationToken cancellationToken)
+    {
+        var apiKey = provider.Auth?.ApiKey
+            ?? throw new ModelsError(ModelsErrorCode.Auth,
+                $"{provider.Name} does not support {AuthTypeName(AuthType.ApiKey)} login");
+        if (apiKey.Login is null)
+        {
+            throw new ModelsError(ModelsErrorCode.Auth,
+                $"{provider.Name} does not support {AuthTypeName(AuthType.ApiKey)} login");
+        }
+        return await apiKey.Login(
+            new ProviderAuthInteraction(interaction, cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>pi 的 AuthType 字面量（"oauth"/"api_key"）用于报错文案。</summary>
+    private static string AuthTypeName(AuthType type)
+        => type == AuthType.OAuth ? "oauth" : "api_key";
 
     public async Task LogoutAsync(string providerId, AuthOperationOptions? options = null)
     {
@@ -342,21 +526,8 @@ public sealed partial class Models
         var stored = await ReadCredentialAsync(provider.Id, ct).ConfigureAwait(false);
         if (stored is OAuthCredential oauth)
         {
-            if (auth.OAuth?.ToAuth is null) return null;
-            try
-            {
-                var modelAuth = await auth.OAuth.ToAuth(oauth, ct).ConfigureAwait(false);
-                return new AuthResult(modelAuth, null, "OAuth"); // OAuth Extra→env 随 D1/S5
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception error)
-            {
-                throw new ModelsError(ModelsErrorCode.OAuth,
-                    $"OAuth auth derivation failed for provider {provider.Id}", error);
-            }
+            if (auth.OAuth is null) return null;
+            return await ResolveStoredOAuthAsync(provider, auth.OAuth, oauth, overrides, ct).ConfigureAwait(false);
         }
 
         if (stored is ApiKeyCredential apiKey)

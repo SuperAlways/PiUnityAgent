@@ -14,7 +14,12 @@ namespace PiUnityAgent.Ai.Providers;
 /// </summary>
 public static class OpenRouterProvider
 {
-    public static IProvider Create() => ProviderFactory.Create(new CreateProviderOptions
+    /// <summary>
+    /// <paramref name="oauthFetch"/> 非空时挂 OpenRouter OAuth（manual code → 永久 key）——经
+    /// <see cref="AuthHelpers.LazyOAuth"/> 对齐 pi 的 loadOpenRouterOAuth 形状；为空保持
+    /// API-key-only（spec §10：loopback 回调 C 偏离、按用户做目录个性化另案）。
+    /// </summary>
+    public static IProvider Create(Types.FetchFunction? oauthFetch = null) => ProviderFactory.Create(new CreateProviderOptions
     {
         Id = "openrouter",
         Name = "OpenRouter",
@@ -22,6 +27,13 @@ public static class OpenRouterProvider
         Auth = new ProviderAuth
         {
             ApiKey = AuthHelpers.EnvApiKeyAuth("OpenRouter API key", new[] { "OPENROUTER_API_KEY" }),
+            OAuth = oauthFetch is null
+                ? null
+                : AuthHelpers.LazyOAuth(
+                    "OpenRouter OAuth",
+                    () => System.Threading.Tasks.Task.FromResult<OAuthAuth>(new OpenRouterOAuth(oauthFetch).ToOAuthAuth()),
+                    isSubscription: false,
+                    loginLabel: "Sign in with OpenRouter"),
         },
         Models = ModelCatalog.GetChatModels("openrouter"),
         ApiByApi = new Dictionary<string, ProviderStreams>

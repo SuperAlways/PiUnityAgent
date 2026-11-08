@@ -19,12 +19,26 @@ public static class AnthropicProvider
     private const string OAuthTokenEnv = "ANTHROPIC_OAUTH_TOKEN";
     private const string ApiKeyEnv = "ANTHROPIC_API_KEY";
 
-    public static IProvider Create() => ProviderFactory.Create(new CreateProviderOptions
+    /// <summary>
+    /// <paramref name="oauthFetch"/> 非空时挂 Anthropic OAuth（Claude Pro/Max）——经
+    /// <see cref="AuthHelpers.LazyOAuth"/> 对齐 pi 的 loadAnthropicOAuth 形状；为空保持
+    /// API-key-only（Ai 不引用 HttpClient，宿主负责注入 fetch，B/D 偏离）。
+    /// </summary>
+    public static IProvider Create(Types.FetchFunction? oauthFetch = null) => ProviderFactory.Create(new CreateProviderOptions
     {
         Id = "anthropic",
         Name = "Anthropic",
         BaseUrl = "https://api.anthropic.com",
-        Auth = new ProviderAuth { ApiKey = CreateApiKeyAuth() },
+        Auth = new ProviderAuth
+        {
+            ApiKey = CreateApiKeyAuth(),
+            OAuth = oauthFetch is null
+                ? null
+                : AuthHelpers.LazyOAuth(
+                    "Anthropic (Claude Pro/Max)",
+                    () => System.Threading.Tasks.Task.FromResult<OAuthAuth>(new AnthropicOAuth(oauthFetch).ToOAuthAuth()),
+                    isSubscription: true),
+        },
         Models = ModelCatalog.GetChatModels("anthropic"),
         Api = AnthropicMessages.Streams(),
     });
