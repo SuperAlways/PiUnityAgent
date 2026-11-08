@@ -64,6 +64,7 @@ public sealed record FauxModelDefinition
     public string? Name { get; init; }
     public bool Reasoning { get; init; }
     public IReadOnlyList<ModelInputModality>? Input { get; init; }
+    public ModelInputLimits? InputLimits { get; init; }
     public ModelCost? Cost { get; init; }
     public int ContextWindow { get; init; } = 128000;
     public int MaxTokens { get; init; } = 16384;
@@ -83,9 +84,22 @@ public sealed record FauxProviderOptions
 public sealed class FauxProviderState
 {
     private int _callCount;
+    private int _deferredFetchCount;
     private long _toolCallIndex;
     public int CallCount => Volatile.Read(ref _callCount);
+
+    /// <summary>
+    /// D3 形状锚点：延迟取回计数仅保形状，计数递增随 S8 Deferred 行为一起落地。
+    /// </summary>
+    public int DeferredFetchCount => Volatile.Read(ref _deferredFetchCount);
+
+    /// <summary>
+    /// D3 形状锚点：已取消的延迟句柄收集列表仅保形状，填充随 S8 一起落地。
+    /// </summary>
+    public List<DeferredHandle> CancelledDeferred { get; } = new();
+
     internal void IncrementCallCount() => Interlocked.Increment(ref _callCount);
+    internal void IncrementDeferredFetchCount() => Interlocked.Increment(ref _deferredFetchCount);
 
     /// <summary>
     /// Provider 级单调计数器，支撑确定性 ToolCall id <c>tool:{n}</c>（spec §6.7：

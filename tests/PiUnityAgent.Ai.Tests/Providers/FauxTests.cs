@@ -52,11 +52,42 @@ public class FauxTests
         var faux = new FauxProvider();
         var auth = faux.Provider.Auth;
 
+        Assert.NotNull(faux.Provider.Auth);
         Assert.NotNull(auth.ApiKey);
+        Assert.Equal("Faux", auth.ApiKey!.Name);
         var resolved = await auth.ApiKey!.Resolve(
             new ApiKeyResolveInput(new DefaultAuthContext(), null), default);
 
         Assert.NotNull(resolved);
+    }
+
+    [Fact]
+    public void Model_Definition_Carries_InputLimits()
+    {
+        var faux = new FauxProvider(new FauxProviderOptions
+        {
+            Models = new[]
+            {
+                new FauxModelDefinition
+                {
+                    Id = "m1",
+                    InputLimits = new ModelInputLimits { MaxRequestBytes = 100 },
+                },
+            },
+        });
+
+        Assert.Equal(100, faux.GetModel("m1").InputLimits!.MaxRequestBytes);
+    }
+
+    [Fact]
+    public void Provider_State_Exposes_Deferred_Shape()
+    {
+        // D3 形状锚点：DeferredFetchCount/CancelledDeferred 仅保形状，行为后置 S8。
+        var faux = new FauxProvider();
+
+        Assert.Equal(0, faux.State.DeferredFetchCount);
+        Assert.NotNull(faux.State.CancelledDeferred);
+        Assert.Empty(faux.State.CancelledDeferred);
     }
 
     [Fact]

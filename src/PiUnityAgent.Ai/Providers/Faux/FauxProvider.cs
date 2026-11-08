@@ -38,6 +38,7 @@ public sealed class FauxProvider
             Provider = _options.Provider,
             BaseUrl = Faux.DefaultBaseUrl,
             Input = definition.Input ?? new[] { ModelInputModality.Text, ModelInputModality.Image },
+            InputLimits = definition.InputLimits,
             Cost = definition.Cost ?? new ModelCost(),
             Reasoning = definition.Reasoning,
             ContextWindow = definition.ContextWindow,
