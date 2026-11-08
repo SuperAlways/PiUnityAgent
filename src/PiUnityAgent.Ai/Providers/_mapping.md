@@ -80,11 +80,25 @@
 | 上游 | 我们 | 说明 |
 |---|---|---|
 | pi `providers/anthropic.ts` | `AnthropicProvider.cs` | `Create()`：anthropic / `https://api.anthropic.com` / `AnthropicMessages.Streams()`；认证链=stored key → `ANTHROPIC_AUTH_TOKEN`（`Authorization: Bearer` 头，source=env 名）→ `ANTHROPIC_OAUTH_TOKEN` → `ANTHROPIC_API_KEY`（按序、空串跳过）；login 走 Secret prompt |
-| pi `providers/anthropic.ts:53-69`（federation） | —— 后置 | 工作负载身份联合（三必需 env + 两可选收进 `AuthResult.Env`）未实现，源码留 `TODO(S5,D1)` |
-| pi `auth/oauth/load.ts` + `lazyOAuth`（anthropic） | —— Task 6 | `Auth.OAuth`（Claude Pro/Max，isSubscription）在 D1 任务接 `LazyOAuth`；本任务 profile 钉死无 OAuth |
+| pi `providers/anthropic.ts:53-69`（federation） | —— 后置（D15） | 工作负载身份联合（三必需 env + 两可选收进 `AuthResult.Env`）未实现，源码留 `TODO(后续扩展,D15)`，台账 D15 行（后续扩展） |
+| pi `auth/oauth/load.ts` + `lazyOAuth`（anthropic/openrouter） | `AuthHelpers.LazyOAuth` 接线 | D1 已落地：`AnthropicProvider.Create(FetchFunction? oauthFetch)` / `OpenRouterProvider.Create(...)` 非空 fetch 时挂 `Auth.OAuth`（Anthropic (Claude Pro/Max) isSubscription / OpenRouter OAuth + LoginLabel）；为空保持 API-key-only |
 | pi `providers/minimax.ts` + `minimax-cn.ts` | `MinimaxProvider.cs` | `Create()`/`CreateCn()`：minimax（api.minimax.io/anthropic）/ minimax-cn（api.minimaxi.com/anthropic）；`MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`；AnthropicMessages |
 | pi `providers/google.ts` | `GoogleProvider.cs` | google / `https://generativelanguage.googleapis.com/v1beta` / `GEMINI_API_KEY` / `GoogleGenerativeAi.Streams()` |
 | pi `providers/fireworks.ts` | `FireworksProvider.cs` | fireworks / `https://api.fireworks.ai/inference` / `FIREWORKS_API_KEY`；`ApiByApi`：anthropic-messages + openai-completions 按 model.Api 分派（openai 组模型自带 `/v1` 后缀 baseUrl，照搬数据） |
 | pi `providers/vercel-ai-gateway.ts` | `VercelAiGatewayProvider.cs` | vercel-ai-gateway / `https://ai-gateway.vercel.sh` / `AI_GATEWAY_API_KEY` / AnthropicMessages；typesafe-system-one 分类后置（D5，spec §10） |
 | pi `providers/openrouter.ts` | `OpenRouterProvider.cs` | openrouter / `https://openrouter.ai/api/v1` / `OPENROUTER_API_KEY`；`ApiByApi` 双协议；OAuth（Task 6/D1）、openrouter-images（D4）、typesafe 分类（D5）、`GET /models/user` 目录个性化（C 偏离，Task 7 审计登记）均后置；归属/身份头不设 provider 级——走应用级 `ClientIdentity` |
 | pi.net `ModelData/{7 份}.json` | `ModelData/` | anthropic(17)/minimax(4)/minimax-cn(4)/google(23)/fireworks(19+10)/vercel-ai-gateway(302 chat,14 classifier 不进)/openrouter(19+370 chat,63 image+33 classifier 不进)，与 pi.net `src/Pi.Ai/ModelData/` 逐字节一致；`ModelCatalog` 零改动即消费 |
+
+### S5 协议适配 + D1/D7（Task 1–6 落地）
+
+| 上游 | 我们 | 说明 |
+|---|---|---|
+| pi `api/anthropic-messages.ts` | `Api/AnthropicMessages.cs` | `AnthropicMessages.Streams()/Stream(...,AnthropicOptions?)/StreamSimple(...)`；请求/消息/工具转换 + SSE 状态机（message_start/content_block_*/message_delta/message_stop）+ strict 400 降级重发 + providerThinkingLevel 重放 + cache_control 三落点（D6）+ OpenRouter 实付覆盖；偏离见 spec §10.2 |
+| pi `api/google-generative-ai.ts` + `api/google-shared.ts` | `Api/GoogleGenerativeAi.cs` | `GoogleGenerativeAi.Streams()/Stream(...,GoogleOptions?)/StreamSimple(...)`；contents/systemInstruction/tools/toolConfig 顶层 wire + thinkingConfig + functionCall/thoughtSignature + finishReason/usageMetadata；偏离见 spec §10.3 |
+| pi `auth/pkce.ts` | `Providers/Auth/OAuth/Pkce.cs` | 32 字节 base64url verifier + SHA-256 S256 challenge |
+| pi anthropic.ts/openrouter.ts 粘贴解析 | `Providers/Auth/OAuth/OAuthInput.cs` | `ParseAuthorizationInput`（URL/`code#state`/查询串/裸 code，Anthropic 用）+ `ParseAuthorizationCode`（OpenRouter 用） |
+| pi.net `OAuthHttp.cs` | `Providers/Auth/OAuth/OAuthHttp.cs` | `PostJsonAsync`（严格）/`SendJsonAsync`（宽容）+ `ParseJsonObject`；换注入 `FetchFunction` 底座，30s → FetchOptions 三超时 |
+| pi `auth/oauth/anthropic.ts` | `Providers/Auth/OAuth/AnthropicOAuth.cs` | copy-code/manual 登录（授权 URL 八参数/S256/state 校验/交换六键/`expires=now+expires_in*1000-5min`）+ `RefreshAsync` + `ToAuthAsync`；错误文案逐条对齐 pi |
+| pi `auth/oauth/openrouter.ts` | `Providers/Auth/OAuth/OpenRouterOAuth.cs` | manual code → 永久 key（`expires=9007199254740991` JS MAX_SAFE_INTEGER，pi 同值）；Refresh no-op |
+| pi.net `Auth/FileCredentialStore`（自研对齐 pi CredentialStore 契约） | `Providers/Auth/FileCredentialStore.cs` | D7：JSON 文件 + 原子写（`.tmp`→`File.Replace`/`Move`）+ per-provider `SemaphoreSlim` + `~` 展开 + version=1 校验；坏结构 `ModelsError(Auth)` |
+| pi `models.ts login/logout` + `auth/resolve.ts` | `Providers/Models.Auth.cs` | `LoginAsync/LogoutAsync`（写库/删库，失败包 `ModelsError(Auth)`）+ `ResolveStoredOAuthAsync`（5 分钟窗口刷新，pi resolveStoredOAuth）+ `RefreshStoredOAuthCredentialAsync`（锁内刷新、轮换先持久化、在途取消免疫）+ `ResolveRefreshCredentialAsync`（D2 过期刷新路径） |
