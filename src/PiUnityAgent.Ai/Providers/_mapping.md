@@ -54,3 +54,23 @@
 | `ModelsError` | `ModelsError.cs` | `ModelsErrorCode` 六值（ModelSource/ModelValidation/Provider/Stream/Auth/OAuth） |
 | `calculateCost`/thinking/equality 工具 | `ModelOperations.cs` | `CalculateCost`/`GetSupportedThinkingLevels`/`ClampThinkingLevel`/`ModelsAreEqual`/`HasApi`/`IsModelType` |
 | `api/lazy.ts` observer | `Events/LazyStreamObserver.cs` | `ILazyStreamObserver` 为 `LazyStream.Run` 第三参；Push→`OnEvent`、End→`OnResult`；setup 失败 `OnResult(错误终态消息)` |
+
+## S4 新增映射（OpenAI 家族：ModelCatalog + 8 家 profile + D14 helpers）
+
+| 上游 | 我们 | 说明 |
+|---|---|---|
+| pi.net `Models/ModelCatalog.cs` | `ModelCatalog.cs` | `ModelCatalog.GetChatModels(providerId)` 读嵌入资源 `Providers/ModelData/{providerId}.json`；顶层按 api 分组、只枚举 `chat:` 前缀键 + 显式 `type != "chat"` 双保险；缺资源/空 id 返回空列表不抛；条目 JSON 内 `provider` 字段优先于目录 key（plan 钉死）、缺 `type` 缺省 chat |
+| pi.net `ModelData/*.json` | `ModelData/`（12 份嵌入资源） | openai / xai / deepseek / moonshotai / moonshotai-cn / zai / zai-coding-cn / qwen-token-plan / qwen-token-plan-cn / qwen-token-plan-individual / xiaomi / groq，自 pi.net 原样拷贝；csproj `EmbeddedResource` |
+| pi `providers/openai.ts` | `OpenAiProvider.cs` | `Create()`：openai / `https://api.openai.com/v1` / OPENAI_API_KEY / `OpenAiResponses.Streams()` |
+| pi `providers/xai.ts` | `XaiProvider.cs` | `Create()`：xai / `https://api.x.ai/v1` / XAI_API_KEY / Responses |
+| pi `providers/deepseek.ts` | `DeepseekProvider.cs` | `Create()`：deepseek / `https://api.deepseek.com` / DEEPSEEK_API_KEY / `OpenAiCompletions.Streams()` |
+| pi `providers/moonshotai.ts`（intl + cn） | `MoonshotProvider.cs` | `Create()`/`CreateCn()`：moonshotai / moonshotai-cn；api.moonshot.ai|api.moonshot.cn `/v1`；共用 MOONSHOT_API_KEY |
+| pi `providers/zai.ts`（zai + coding-cn） | `ZaiProvider.cs` | `Create()`/`CreateCodingCn()`：zai（api.z.ai/api/coding/paas/v4，ZAI_API_KEY）/ zai-coding-cn（open.bigmodel.cn 同路径，ZAI_CODING_CN_API_KEY） |
+| pi `providers/qwen-token-plan.ts` | `QwenTokenPlanProvider.cs` | `Create()`/`CreateCn()`/`CreateIndividual()`：ap-southeast-1 / cn-beijing / ap-southeast-1（`.maas.aliyuncs.com/compatible-mode/v1`）；CN 用 QWEN_TOKEN_PLAN_CN_API_KEY，individual 与国际共用 QWEN_TOKEN_PLAN_API_KEY |
+| pi `providers/xiaomi.ts` | `XiaomiProvider.cs` | `Create()`：xiaomi / `https://api.xiaomimimo.com/v1` / XIAOMI_API_KEY |
+| pi `providers/groq.ts` | `GroqProvider.cs` | `Create()`：groq / `https://api.groq.com/openai/v1` / GROQ_API_KEY |
+| pi `createProvider` refreshModels 包装（models.ts:1129-1160） | `ProviderFactory.cs` `RefreshableCreatedProvider` | `FetchModels` 给出时产物实现 `IRefreshableProvider`（D2）；`GetAllModels`=静态基线∪动态覆盖表（同 type+id 就地替换、否则追加） |
+| pi `auth/helpers.ts` | `Auth/AuthHelpers.cs` | `EnvApiKeyAuth(name, envVars)`（stored key 胜→按序第一个非空 env）/ `LazyOAuth(name, load, ...)`（首次 login/refresh/toAuth 懒加载且仅一次）；真实 OAuth 行为 D1/S5 |
+| pi `utils/identity.ts` | `Types/ClientIdentityHelpers.cs` | `FormatUserAgent`/`GetClientVersion`/`GetAttributionHeaders`/`GetIdentityHeaders`/`ClientIdentityTarget`；UA 版本用 Ai 程序集版本、runtime 段恒 `(browser)`（偏离登记 S4 spec §10） |
+
+> 8 家 family 的 id/baseUrl/env 逐一核对 pi `packages/ai/src/providers/*.ts`（Task 7）；profile 只封装 baseUrl/auth/models，不实现 SSE/JSON 解析（spec §3.1 边界）。

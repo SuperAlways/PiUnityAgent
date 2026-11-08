@@ -444,7 +444,15 @@ public static class GroqProvider
 | Responses input items | `convertResponsesMessages` | JsonObject 手写 | 同语义 | B | 事件层仍翻译成 S2 事件 |
 | provider profile | 45+ provider 定义 | 50 文件 | 首批 8 家 family（含 CN/区域变体） | C/D9 | 覆盖收敛；其余 profile 增量接 |
 | 模型数据 | pi 全量 models | JSON 全量 | 首批子集 | C/D9 | 只做 S4 实际模型；后续补数据 |
-| OAuth/ChatGPT sign-in | openai/xai OAuth | OAuth 实现 | API Key 先行 | C/D1 | OAuth 行为 S5 |
+| tool_calls 参数流 partial 快照 | `StreamingJsonParser` 容错部分解析，delta 间 `block.arguments` 显示部分 JSON | 同 | 仅原始文本累积（Task 4 `ToolCallArguments` 最小端口），块 Arguments 在 ToolCallEnd/output_item.done 才成完整 JsonObject | C | Task 4 已定型的最小基础设施；`ToolCallDelta` 仍携带原始文本增量，进度在 delta 流上可见（Task 5/6） |
+| 非法工具参数 | `parseToolCallArguments` 永不抛 → `argumentsError` 落块 + 正常 Done | 同 | catch `ToolCallArguments.Finish()` 的 JsonException → ArgumentsError + 正常 Done | B | 按 pi 真实语义实现（Task 5/6 各有聚焦用例）；Task 4 旧注释语义以本表为准 |
+| StreamSimple 缺 key 时机 | 同步 throw（返回流之前） | 同 | 全部进流内 catch → 终态 Error | B | 全局约束"provider 流不得抛出"；代价=StreamSimple 不再同步报缺 key（Task 5/6） |
+| D2 刷新并发模型 | `Promise.all` 并发 + per-provider generation/AbortController 去抖；`structuredClone(persist)` 落库 | 同 pi 语义 | 顺序 for + 单 CancellationToken，无 generation 去抖；publication 原引用落库 | C/D | Unity netstandard2.1 顺序化收益/复杂度权衡；`ModelsStoreEntry` 为 init-only record 无别名突变面（Task 8A `24e4d80`） |
+| 过期 stored OAuth 刷新凭据 | `refreshStoredOAuthCredential` 轮换 + 持久化 | 同 | 过期视为无有效凭据并跳过网络阶段；`TODO(S5,D1)` 锚落码 | C/D1 | OAuth 轮换归 D1/S5；代价=过期 OAuth 的 provider 不自动刷目录（Task 8A） |
+| Hosts.Net8 Fetch 适配器 | SDK fetch | HttpClient + 手写 SSE | `UnityLlmTransportFetch`（`IStreamingHttpTransport`→Fetch 端口）+ `HttpClientFetch` | B | 唯一 transport 缝在 Hosts；Ai 层零 transport 引用；Unity 运行时 link.xml/防裁剪配置未 vendored（S13 落地时补） |
+| ModelCatalog JSON 字段口径 | `models.generated.ts` 编译期数据 | `ModelData/*.json` | JSON 内 `provider` 字段优先于目录 key（plan 钉死）；条目缺 `type` 缺省 chat | B | 与 pi.net ModelCatalog 兼容；`chat:` 前缀 + `type != chat` 双保险过滤（Task 7） |
+| 协议适配器辅助代码重复 | — | — | `OpenAiCompletions.cs`/`OpenAiResponses.cs` 内联重复约 1300 行私有辅助 | D/TODO | 收编债务：后续以一次性 mechanical 提取下沉 `Api/OpenAiShared.cs`（§4 预留位）；不得再造第三份拷贝（Task 6 报告遗留 #1） |
+| OAuth/ChatGPT sign-in | openai/xai OAuth | OAuth 实现 | API Key 先行 | C/D1 | OAuth 行为 S5；ChatGPT sign-in 限制字段（isChatGPTSignIn/omitUnsupportedFields/订阅限额文案）不实现（Task 6） |
 | Anthropic/Google | S5 | S5 | S4 不做 | C | S5 另立 spec |
 | 全局 ApiRegistry | `compat.registerApiProvider` | `ApiRegistry` | 不新增；ProviderFactory 分派 | C/D | 避免重复分派层；动态注册后续按需 |
 | `retryAssistantCall` | 上层 agent 重试 | 上层 | S4 不实现 | C | S4 只做 provider 首字节前重试 |
