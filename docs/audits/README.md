@@ -14,3 +14,5 @@
 | S1–S5 修复复核 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（原 §5 六组必需动作全部核销；F-1~F-4/F-4r 文档订正全部清偿；0 Critical/Important） | [`2026-11-09-S1-S5-cumulative-deviation-recheck.md`](2026-11-09-S1-S5-cumulative-deviation-recheck.md) | 已随 `721ac75` 合入 main |
 | S6 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（0 Critical/Important；6 Minor 已全部处置） | [`2026-11-09-S6-deviation-audit.md`](2026-11-09-S6-deviation-audit.md) | 修复后新审计者复核 |
 | S6 修复复核 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（U-1~U-6 全核销；N-1 已订正；0 Critical/Important） | [`2026-11-09-S6-deviation-recheck.md`](2026-11-09-S6-deviation-recheck.md) | 已随 `987b3c0` 合入 main |
+| S7 | 2026-11-09 | **FAIL**（0 Critical / 2 Important：U-1 RunToolCall tools 形状、U-2 OCE 传播；8 Minor） | [`2026-11-09-S7-deviation-audit.md`](2026-11-09-S7-deviation-audit.md) | 修复后新审计者复核 |
+| S7 修复复核 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（U-1~U-10 全核销；N-1 台账“最后更新”已订正；0 Critical/Important） | [`2026-11-09-S7-deviation-recheck.md`](2026-11-09-S7-deviation-recheck.md) | 待用户验收合并 |
