@@ -448,7 +448,7 @@ public static class DefaultStreamFn
 | PollAsync 吞异常 | `getSteeringMessages` 抛错即 reject runAgentLoop（`.then(end)` 模式下流悬挂） | 同吞（AgentLoopRunner） | 回调抛错→捕获返回空列表继续 | D | pi.net 硬化；代价=钩子异常被静默降级为空轮询（2026-11-09 审计 U-3 登记） |
 | 非有限数值 partial 快照 | 快照直持 Infinity/NaN（JS Number） | — | `SerializeToNode` 抛 `ArgumentException`→catch 降级为空对象 | D/低 | C# JsonNode 不承载非有限数值；代价=partial 期间该字段缺省，终点 repair 同受限于 JsonNode（审计 U-4 登记） |
 | prepareArguments 非对象返回 | 非对象交 schema 校验（校验语义报错） | 直传 object（无强转） | `(JsonObject)` 强转→InvalidCastException 消息进错误结果 | D/低 | 局部小改未做；代价=极端入参下错误文案不同（仍为 isError 结果、不执行）（审计 U-8 登记） |
-| QueueMode/双队列排空模式 | `types.ts:47-55` `"all"/"one-at-a-time"` 公共类型 + 排空点注入 | 无 | 无对应类型 | scope | 队列存储归 S8（§1.2 非目标），非后置裁剪；S8 plan 须显式承接该形状，否则成 shape gap（审计 U-9 登记） |
+| QueueMode/双队列排空模式 | `types.ts:49-55` `"all"/"one-at-a-time"` 公共类型 + 排空点注入 | 无 | 无对应类型 | scope | 队列存储归 S8（§1.2 非目标），非后置裁剪；S8 plan 须显式承接该形状，否则成 shape gap（审计 U-9 登记 → 台账 D23） |
 
 ---
 
