@@ -1,0 +1,440 @@
+using System.Diagnostics;
+using System.Text.Json.Nodes;
+using PiUnityAgent.Ai.Types;
+using PiUnityAgent.Ai.Utils;
+using PiUnityAgent.Core.Tools;
+
+namespace PiUnityAgent.Core.Agent;
+
+/// <summary>
+/// 工具批执行。对应 TS <c>executeToolCalls / executeToolCallsSequential /
+/// executeToolCallsParallel / prepareToolCall / finalizeExecutedToolCall</c>。
+/// <para>语义要点：预检（参数处理 + beforeToolCall）始终顺序执行；并行模式允许
+/// 通过预检的工具并发执行——<c>tool_execution_end</c> 按完成序发出，而
+/// tool-result 消息事件按助手消息中的源顺序发出；批提前终止仅在批内全部
+/// 终结结果的 <c>Terminate</c> 均为 true 时生效。</para>
+/// </summary>
+public static partial class ToolExecution
+{
+    public sealed record ExecutedToolCallBatch(List<ToolResultMessage> Messages, bool Terminate);
+
+    /// <summary>
+    /// 按配置的模式分发执行。
+    /// </summary>
+    internal static async Task<ExecutedToolCallBatch> ExecuteToolCalls(
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentEventSink emit)
+    {
+        var toolCalls = assistantMessage.Content.OfType<ToolCall>().ToList();
+        var hasSequentialToolCall = toolCalls.Any(tc =>
+            (context.Tools ?? Array.Empty<AgentTool>())
+                .Any(t => t.Name == tc.Name && t.ExecutionMode == ToolExecutionMode.Sequential));
+
+        if (config.ToolExecution == ToolExecutionMode.Sequential || hasSequentialToolCall)
+            return await ExecuteSequential(context, assistantMessage, toolCalls, config, signal, emit).ConfigureAwait(false);
+        return await ExecuteParallel(context, assistantMessage, toolCalls, config, signal, emit).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 单次工具调用走与模型发起调用完全相同的管线：参数准备、schema 准备、
+    /// <c>beforeToolCall</c>、执行、<c>afterToolCall</c>。对应 TS <c>runToolCall</c>
+    /// （agent-loop.ts）。不发事件、不加消息——供「工具再调工具」（ctx.executeTool）使用，
+    /// 使钩子（如权限检查）对那些调用同样生效。
+    /// <para>工具失败永不抛错：未知工具、参数错误、被阻断、执行抛异常都以
+    /// <c>IsError = true</c> 返回。<paramref name="onUpdate"/> 的流式部分结果直接转发给调用方
+    /// （TS 同款：runToolCall 不产生事件，onUpdate 由调用方决定去向）。</para>
+    /// </summary>
+    public static async Task<AgentToolCallOutcome> RunToolCallAsync(
+        ToolCall toolCall,
+        AssistantMessage assistantMessage,
+        AgentContext context,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentToolUpdateCallback? onUpdate = null)
+    {
+        var prepared = await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false);
+        if (prepared is PreparedCall.Blocked blocked)
+        {
+            return new AgentToolCallOutcome(toolCall, blocked.Result, blocked.Result.IsError);
+        }
+
+        if (prepared is not PreparedCall.Ready ready)
+        {
+            throw new InvalidOperationException("Unknown prepared call");
+        }
+
+        var executed = await ExecutePrepared(ready, signal, onUpdate).ConfigureAwait(false);
+        return await Finalize(executed.Result, executed.DurationMs, ready, context, assistantMessage, config, signal)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 输出被 token 上限截断的助手消息中的全部工具调用一律报错：
+    /// 流式参数经 JSON 抢救解析后可能"看似完整实则截断"，不可执行。
+    /// 对应 TS <c>failToolCallsFromTruncatedMessage</c>。
+    /// </summary>
+    internal static async Task<ExecutedToolCallBatch> FailToolCallsFromTruncatedMessage(
+        IReadOnlyList<ToolCall> toolCalls, AgentEventSink emit)
+    {
+        var messages = new List<ToolResultMessage>();
+        foreach (var toolCall in toolCalls)
+        {
+            await emit(new AgentEvent.ToolExecutionStart(toolCall.Id, toolCall.Name, toolCall.Arguments)).ConfigureAwait(false);
+            var outcome = new AgentToolCallOutcome(toolCall, AgentToolResult.FromError(
+                $"Tool call \"{toolCall.Name}\" was not executed: the response hit the output token limit, "
+                + "so its arguments may be truncated. Re-issue the tool call with complete arguments."), true);
+            await emit(new AgentEvent.ToolExecutionEnd(toolCall.Id, toolCall.Name, outcome.Result, true, null)).ConfigureAwait(false);
+            var message = CreateToolResultMessage(outcome);
+            await emit(new AgentEvent.MessageStart(message)).ConfigureAwait(false);
+            await emit(new AgentEvent.MessageEnd(message)).ConfigureAwait(false);
+            messages.Add(message);
+        }
+        return new ExecutedToolCallBatch(messages, Terminate: false);
+    }
+
+    // ---------- 顺序执行 ----------
+
+    private static async Task<ExecutedToolCallBatch> ExecuteSequential(
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        IReadOnlyList<ToolCall> toolCalls,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentEventSink emit)
+    {
+        var messages = new List<ToolResultMessage>();
+        var finalized = new List<AgentToolCallOutcome>();
+        foreach (var toolCall in toolCalls)
+        {
+            var outcome = await ExecuteOne(context, assistantMessage, toolCall, config, signal, emit).ConfigureAwait(false);
+            finalized.Add(outcome);
+            // 顺序模式：每个调用终结后立即发出 end 事件。
+            await emit(new AgentEvent.ToolExecutionEnd(
+                outcome.ToolCall.Id, outcome.ToolCall.Name, outcome.Result, outcome.IsError, outcome.DurationMs))
+                .ConfigureAwait(false);
+            var message = CreateToolResultMessage(outcome);
+            await emit(new AgentEvent.MessageStart(message)).ConfigureAwait(false);
+            await emit(new AgentEvent.MessageEnd(message)).ConfigureAwait(false);
+            messages.Add(message);
+        }
+        return new ExecutedToolCallBatch(messages, ShouldTerminateBatch(finalized));
+    }
+
+    /// <summary>顺序执行单个调用：预检 → 执行 → 终结（start 事件在预检前发出）。</summary>
+    private static async Task<AgentToolCallOutcome> ExecuteOne(
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        ToolCall toolCall,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentEventSink emit)
+    {
+        await emit(new AgentEvent.ToolExecutionStart(toolCall.Id, toolCall.Name, toolCall.Arguments)).ConfigureAwait(false);
+        var prepared = await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false);
+        return prepared switch
+        {
+            PreparedCall.Blocked blocked => new AgentToolCallOutcome(toolCall, blocked.Result, blocked.Result.IsError),
+            PreparedCall.Ready ready => await ExecuteAndFinalize(ready, context, assistantMessage, config, signal, emit).ConfigureAwait(false),
+            _ => throw new InvalidOperationException("Unknown prepared call"),
+        };
+    }
+
+    // ---------- 并行执行 ----------
+
+    private static async Task<ExecutedToolCallBatch> ExecuteParallel(
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        IReadOnlyList<ToolCall> toolCalls,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentEventSink emit)
+    {
+        // 阶段一：顺序预检（发出 start 事件；参数处理 + beforeToolCall 阻断）。
+        var prepared = new List<PreparedCall>(toolCalls.Count);
+        foreach (var toolCall in toolCalls)
+        {
+            await emit(new AgentEvent.ToolExecutionStart(toolCall.Id, toolCall.Name, toolCall.Arguments)).ConfigureAwait(false);
+            prepared.Add(await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false));
+        }
+
+        // 阶段二：并行执行通过预检的调用（blocked 结果直接作为产出）。
+        var tasks = new List<Task<(int Index, AgentToolCallOutcome Outcome)>>(prepared.Count);
+        for (var index = 0; index < prepared.Count; index++)
+        {
+            var currentIndex = index;
+            var current = prepared[index];
+            tasks.Add(Task.Run(async () =>
+            {
+                var outcome = current switch
+                {
+                    PreparedCall.Blocked blocked => new AgentToolCallOutcome(
+                        blocked.ToolCall, blocked.Result, blocked.Result.IsError),
+                    PreparedCall.Ready ready => await ExecuteAndFinalize(
+                        ready, context, assistantMessage, config, signal, emit).ConfigureAwait(false),
+                    _ => throw new InvalidOperationException("Unknown prepared call"),
+                };
+                return (currentIndex, outcome);
+            }, CancellationToken.None));
+        }
+
+        // netstandard2.1 无 Task.WhenEach（.NET 9+）：以 WhenAny 逐个收割，保持完成序。
+        var completed = new Dictionary<int, AgentToolCallOutcome>();
+        var pendingTasks = new List<Task<(int Index, AgentToolCallOutcome Outcome)>>(tasks);
+        while (pendingTasks.Count > 0)
+        {
+            var finished = await Task.WhenAny(pendingTasks.ToArray()).ConfigureAwait(false);
+            pendingTasks.Remove(finished);
+            // await 解包原异常（含 OperationCanceledException），保持中止沿取消路径传播。
+            var (index, outcome) = await finished.ConfigureAwait(false);
+            completed[index] = outcome;
+            // end 事件按完成序发出（对齐 TS 的完成顺序语义）。
+            await emit(new AgentEvent.ToolExecutionEnd(
+                outcome.ToolCall.Id, outcome.ToolCall.Name, outcome.Result, outcome.IsError, outcome.DurationMs))
+                .ConfigureAwait(false);
+        }
+
+        // 阶段三：tool-result 消息按助手消息源顺序合成并发出。
+        var messages = new List<ToolResultMessage>();
+        var finalized = new List<AgentToolCallOutcome>();
+        for (var index = 0; index < toolCalls.Count; index++)
+        {
+            var outcome = completed[index];
+            finalized.Add(outcome);
+            var message = CreateToolResultMessage(outcome);
+            await emit(new AgentEvent.MessageStart(message)).ConfigureAwait(false);
+            await emit(new AgentEvent.MessageEnd(message)).ConfigureAwait(false);
+            messages.Add(message);
+        }
+        return new ExecutedToolCallBatch(messages, ShouldTerminateBatch(finalized));
+    }
+
+    // ---------- 预检结果 ----------
+
+    /// <summary>预检结果的判别联合：可执行 / 被阻断。</summary>
+    private abstract record PreparedCall
+    {
+        private PreparedCall() { }
+
+        public sealed record Ready(ToolCall ToolCall, AgentTool Tool, JsonNode? Args) : PreparedCall;
+
+        public sealed record Blocked(ToolCall ToolCall, AgentToolResult Result, bool Terminate) : PreparedCall;
+    }
+
+    /// <summary>
+    /// 预检：查找工具 → prepareArguments 垫片 → Schema 校验 → beforeToolCall（可阻断）。
+    /// 找不到工具 / 参数处理失败 / 校验失败 / 阻断决策都会产出错误结果（跳过执行）。
+    /// </summary>
+    private static async Task<PreparedCall> PrepareToolCall(
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        ToolCall toolCall,
+        AgentLoopConfig config,
+        CancellationToken signal)
+    {
+        var tool = (context.Tools ?? Array.Empty<AgentTool>()).FirstOrDefault(t => t.Name == toolCall.Name);
+        if (tool is null)
+            return new PreparedCall.Blocked(toolCall, AgentToolResult.FromError($"Tool {toolCall.Name} not found"), false);
+
+        // 参数兼容垫片。ToolCall.Arguments 是 JsonObject（恒非空）；垫片可返回任意节点或 null，
+        // 统一归一为 JsonObject（与 TS 的 validatedArgs 一致，校验前准备好）。
+        JsonObject preparedArguments;
+        try
+        {
+            var preparedArgs = tool.PrepareArguments is not null
+                ? tool.PrepareArguments(toolCall.Arguments)
+                : toolCall.Arguments;
+            preparedArgs ??= new JsonObject();
+            preparedArguments = (JsonObject)preparedArgs;
+        }
+        catch (Exception error)
+        {
+            return new PreparedCall.Blocked(
+                toolCall,
+                AgentToolResult.FromError($"Invalid arguments for tool {toolCall.Name}: {error.Message}"),
+                false);
+        }
+
+        // Schema 校验（上游 validateToolArguments）。校验在 beforeToolCall 之前，
+        // 失败即以 isError 结果回给模型；「模型给的参数文本不是合法 JSON」由
+        // argumentsError 短路，绝不让工具带着残缺字段执行（上游 #10897）。
+        // 工具拿到的是强制类型转换后的参数，与 TS 的 validatedArgs 一致。
+        JsonNode? args;
+        try
+        {
+            args = ToolValidation.ValidateToolArguments(tool.Definition, toolCall with { Arguments = preparedArguments });
+        }
+        catch (InvalidOperationException error)
+        {
+            return new PreparedCall.Blocked(toolCall, AgentToolResult.FromError(error.Message), false);
+        }
+
+        if (config.BeforeToolCall is not null)
+        {
+            var decision = await config.BeforeToolCall(
+                new BeforeToolCallContext(assistantMessage, toolCall, args, context), signal).ConfigureAwait(false);
+            if (decision?.Block == true)
+            {
+                var reason = decision.Reason ?? "Tool execution was blocked";
+                // TS 把 terminate 写在错误结果本体上（result.terminate = true），否则
+                // blocked 分支构造 outcome 时会把它丢掉。AgentToolResult.Terminate 是
+                // init-only，用 with 落到结果上；Blocked 记录同时保留该旗标。
+                var terminate = decision.Terminate == true;
+                return new PreparedCall.Blocked(
+                    toolCall, AgentToolResult.FromError(reason) with { Terminate = terminate }, terminate);
+            }
+        }
+
+        return new PreparedCall.Ready(toolCall, tool, args);
+    }
+
+    // ---------- 执行 / 终结 ----------
+
+    private static async Task<AgentToolCallOutcome> ExecuteAndFinalize(
+        PreparedCall.Ready prepared,
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        AgentLoopConfig config,
+        CancellationToken signal,
+        AgentEventSink emit)
+    {
+        var executed = await ExecutePrepared(prepared, signal, EmitToolExecutionUpdate(prepared.ToolCall, emit))
+            .ConfigureAwait(false);
+        return await Finalize(executed.Result, executed.DurationMs, prepared, context, assistantMessage, config, signal)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>执行结果 + 单调时钟测得的耗时（毫秒）。对应 TS <c>ExecutedToolCallOutcome</c>。</summary>
+    private sealed record ExecutedToolResult(AgentToolResult Result, long DurationMs);
+
+    /// <summary>
+    /// 流式部分结果转发为 tool_execution_update 事件（对齐 TS 的 emitToolExecutionUpdate）。
+    /// args 用原始调用参数（TS 同款：toolCall.arguments，非校验后值）。
+    /// </summary>
+    private static AgentToolUpdateCallback EmitToolExecutionUpdate(ToolCall toolCall, AgentEventSink emit)
+        => partial => emit(new AgentEvent.ToolExecutionUpdate(
+            toolCall.Id, toolCall.Name, toolCall.Arguments, partial));
+
+    /// <summary>
+    /// 执行已预检的工具调用。对应 TS <c>executePreparedToolCall</c>：
+    /// onUpdate 收集为待办并在 execute 结算后统一等待；结算（含失败/取消）之后到达的
+    /// 部分结果被 <c>acceptingUpdates</c> 丢弃。netstandard2.1 无
+    /// <c>Stopwatch.GetElapsedTime</c>（.NET 7+），以 <c>Stopwatch</c> 实例等价计时。
+    /// </summary>
+    private static async Task<ExecutedToolResult> ExecutePrepared(
+        PreparedCall.Ready prepared,
+        CancellationToken signal,
+        AgentToolUpdateCallback? onUpdate)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        long Elapsed() => (long)Math.Round(stopwatch.Elapsed.TotalMilliseconds);
+        var updateEvents = new List<Task>();
+        var acceptingUpdates = true;
+        try
+        {
+            var result = await prepared.Tool.Execute(
+                prepared.ToolCall.Id, prepared.Args, signal,
+                onUpdate is null
+                    ? null
+                    : partial =>
+                    {
+                        if (!acceptingUpdates) return Task.CompletedTask;
+                        var pendingUpdate = onUpdate(partial);
+                        updateEvents.Add(pendingUpdate);
+                        return pendingUpdate;
+                    }).ConfigureAwait(false);
+            var durationMs = Elapsed();
+            acceptingUpdates = false;
+            await Task.WhenAll(updateEvents).ConfigureAwait(false);
+            return new ExecutedToolResult(result, durationMs);
+        }
+        catch (OperationCanceledException)
+        {
+            // 中止沿取消路径传播（由上层运行决定退出方式）；已入队的更新仍等待结束。
+            acceptingUpdates = false;
+            await Task.WhenAll(updateEvents).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception error)
+        {
+            // 抛出的错误视为失败结果（模型可见文本，UI 可读异常）。
+            acceptingUpdates = false;
+            await Task.WhenAll(updateEvents).ConfigureAwait(false);
+            return new ExecutedToolResult(AgentToolResult.FromError(error.Message), Elapsed());
+        }
+        finally
+        {
+            acceptingUpdates = false;
+        }
+    }
+
+    /// <summary>应用 afterToolCall 覆盖并产出最终结果。对应 TS <c>finalizeExecutedToolCall</c>。</summary>
+    private static async Task<AgentToolCallOutcome> Finalize(
+        AgentToolResult executed,
+        long durationMs,
+        PreparedCall.Ready prepared,
+        AgentContext context,
+        AssistantMessage assistantMessage,
+        AgentLoopConfig config,
+        CancellationToken signal)
+    {
+        var result = executed;
+        var isError = executed.IsError;
+
+        if (config.AfterToolCall is not null)
+        {
+            try
+            {
+                var patch = await config.AfterToolCall(
+                    new AfterToolCallContext(assistantMessage, prepared.ToolCall, prepared.Args, result, isError, context),
+                    signal).ConfigureAwait(false);
+                if (patch is not null)
+                {
+                    // 逐字段覆盖：提供即替换，省略即保留原值；无深合并。
+                    // isError 只进 outcome，不写回结果本体（TS 同款：spread 不带 isError）。
+                    result = result with
+                    {
+                        Content = patch.Content ?? result.Content,
+                        Details = patch.Details ?? result.Details,
+                        Usage = patch.Usage ?? result.Usage,
+                        Terminate = patch.Terminate ?? result.Terminate,
+                    };
+                    if (patch.StructuredContent is not null)
+                        result = result with { StructuredContent = patch.StructuredContent };
+                    // content 被替换而未提供 structuredContent 时，结构化内容失效（可能不再匹配）。
+                    else if (patch.Content is not null)
+                        result = result with { StructuredContent = null };
+                    isError = patch.IsError ?? isError;
+                }
+            }
+            catch (Exception error)
+            {
+                // 钩子自身抛错也按工具失败回给模型（TS 同款），不让循环崩在钩子上。
+                result = AgentToolResult.FromError(error.Message);
+                isError = true;
+            }
+        }
+
+        return new AgentToolCallOutcome(prepared.ToolCall, result, isError) { DurationMs = durationMs };
+    }
+
+    /// <summary>批提前终止：所有终结结果均要求终止才生效。</summary>
+    private static bool ShouldTerminateBatch(IReadOnlyList<AgentToolCallOutcome> finalized)
+        => finalized.Count > 0 && finalized.All(o => o.Result.Terminate);
+
+    /// <summary>把工具结果合成为 toolResult 消息（源顺序；usage/details 随行，TS createToolResultMessage）。</summary>
+    private static ToolResultMessage CreateToolResultMessage(AgentToolCallOutcome outcome)
+        => new()
+        {
+            ToolCallId = outcome.ToolCall.Id,
+            ToolName = outcome.ToolCall.Name,
+            Content = outcome.Result.Content,
+            Details = outcome.Result.Details,
+            Usage = outcome.Result.Usage,
+            IsError = outcome.IsError,
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            DurationMs = outcome.DurationMs is { } duration ? (int)Math.Min(int.MaxValue, duration) : null,
+        };
+}
