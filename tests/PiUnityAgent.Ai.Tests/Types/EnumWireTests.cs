@@ -114,4 +114,41 @@ public class EnumWireTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => StopReasonExtensions.FromWire("nope"));
     }
+
+    [Theory]
+    [InlineData(ImagesStopReason.Stop, "\"stop\"")]
+    [InlineData(ImagesStopReason.Error, "\"error\"")]
+    [InlineData(ImagesStopReason.Aborted, "\"aborted\"")]
+    public void ImagesStopReason_Uses_Wire_Names(ImagesStopReason value, string wire)
+    {
+        Assert.Equal(wire, JsonSerializer.Serialize(value, Options));
+        Assert.Equal(value, JsonSerializer.Deserialize<ImagesStopReason>(wire, Options));
+    }
+
+    [Theory]
+    [InlineData(ClassifierStopReason.Stop, "\"stop\"")]
+    [InlineData(ClassifierStopReason.Error, "\"error\"")]
+    [InlineData(ClassifierStopReason.Aborted, "\"aborted\"")]
+    public void ClassifierStopReason_Uses_Wire_Names(ClassifierStopReason value, string wire)
+    {
+        Assert.Equal(wire, JsonSerializer.Serialize(value, Options));
+        Assert.Equal(value, JsonSerializer.Deserialize<ClassifierStopReason>(wire, Options));
+    }
+
+    [Theory]
+    [InlineData(NestedToolCallStatus.Ok, "\"ok\"")]
+    [InlineData(NestedToolCallStatus.Error, "\"error\"")]
+    [InlineData(NestedToolCallStatus.Unfinished, "\"unfinished\"")]
+    public void NestedToolCallStatus_Uses_Wire_Names(NestedToolCallStatus value, string wire)
+    {
+        Assert.Equal(wire, JsonSerializer.Serialize(value, Options));
+        Assert.Equal(value, JsonSerializer.Deserialize<NestedToolCallStatus>(wire, Options));
+    }
+
+    [Fact]
+    public void Optional_Enum_Unknown_Wire_Value_Throws_JsonException()
+    {
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<ImagesStopReason>("\"nope\"", Options));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<NestedToolCallStatus>("\"nope\"", Options));
+    }
 }

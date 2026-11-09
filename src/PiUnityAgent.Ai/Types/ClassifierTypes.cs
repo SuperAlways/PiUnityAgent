@@ -1,4 +1,7 @@
+using System;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace PiUnityAgent.Ai.Types;
 
@@ -85,11 +88,34 @@ public sealed record ClassifierBoolAnswer : ClassifierAnswer
 }
 
 /// <summary>Why a classifier response ended. Wire values match pi.</summary>
+[JsonConverter(typeof(ClassifierStopReasonJsonConverter))]
 public enum ClassifierStopReason
 {
     Stop,
     Error,
     Aborted,
+}
+
+/// <summary>Wire-name conversion for <see cref="ClassifierStopReason"/>.</summary>
+public sealed class ClassifierStopReasonJsonConverter : JsonConverter<ClassifierStopReason>
+{
+    public override ClassifierStopReason Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.GetString() switch
+        {
+            "stop" => ClassifierStopReason.Stop,
+            "error" => ClassifierStopReason.Error,
+            "aborted" => ClassifierStopReason.Aborted,
+            var wire => throw new JsonException($"Unknown classifier stop reason wire value: {wire}"),
+        };
+
+    public override void Write(Utf8JsonWriter writer, ClassifierStopReason value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value switch
+        {
+            ClassifierStopReason.Stop => "stop",
+            ClassifierStopReason.Error => "error",
+            ClassifierStopReason.Aborted => "aborted",
+            _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown classifier stop reason."),
+        });
 }
 
 /// <summary>Final classifier result.</summary>

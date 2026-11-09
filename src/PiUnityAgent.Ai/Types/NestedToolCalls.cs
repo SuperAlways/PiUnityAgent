@@ -1,13 +1,39 @@
+using System;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace PiUnityAgent.Ai.Types;
 
 /// <summary>Status of a nested tool call made by another tool (for example codemode).</summary>
+[JsonConverter(typeof(NestedToolCallStatusJsonConverter))]
 public enum NestedToolCallStatus
 {
     Ok,
     Error,
     Unfinished,
+}
+
+/// <summary>Wire-name conversion for <see cref="NestedToolCallStatus"/>.</summary>
+public sealed class NestedToolCallStatusJsonConverter : JsonConverter<NestedToolCallStatus>
+{
+    public override NestedToolCallStatus Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.GetString() switch
+        {
+            "ok" => NestedToolCallStatus.Ok,
+            "error" => NestedToolCallStatus.Error,
+            "unfinished" => NestedToolCallStatus.Unfinished,
+            var wire => throw new JsonException($"Unknown nested tool call status wire value: {wire}"),
+        };
+
+    public override void Write(Utf8JsonWriter writer, NestedToolCallStatus value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value switch
+        {
+            NestedToolCallStatus.Ok => "ok",
+            NestedToolCallStatus.Error => "error",
+            NestedToolCallStatus.Unfinished => "unfinished",
+            _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown nested tool call status."),
+        });
 }
 
 /// <summary>One nested tool call record. Results are not recorded.</summary>
