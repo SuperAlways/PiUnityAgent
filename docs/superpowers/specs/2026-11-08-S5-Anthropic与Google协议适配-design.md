@@ -219,7 +219,7 @@ public static class GoogleGenerativeAi
 | Google 自定义 fetch | pi 拒绝 | — | Fetch 端口统一 | B/D | 无 |
 | 共享 helper 私有副本 | 共享 util（transform-messages/strict-sampling/错误格式化等） | 同左左源 | 各适配器私有拷贝（4+ 份） | D/TODO | 去重需跨文件重构，留统一批次 |
 | 默认头 null 抑制扩展 | `createClient` 默认头合并 | 同 | `IsHeaderSuppressed` 扩展：默认头也可被 null 抑制（S4 无此行为） | D | 更灵活；与 pi 默认头合并语义有扩展面（审计补登记） |
-| FileCredentialStore 跨进程互斥 | `credential-store.ts:82-84` 要求 backing store 支持时跨进程 | — | 仅进程内 per-provider `SemaphoreSlim`（无文件锁） | C/低 | 多进程共写同一 auth.json 不在保证范围（D7 备注已述）；2026-11-09 审计 U-7 补登记 |
+| FileCredentialStore 跨进程互斥 | `auth/types.ts:82-84` 要求 backing store 支持时跨进程 | — | 仅进程内 per-provider `SemaphoreSlim`（无文件锁） | C/低 | 多进程共写同一 auth.json 不在保证范围（D7 备注已述）；2026-11-09 审计 U-7 补登记 |
 
 ### 10.2 Anthropic
 

@@ -224,7 +224,7 @@
 **误报驳回（采集 subagent 报告中被本审计者复核否决的结论）**：
 1. S5 采集报告曾报"Anthropic federation 整条链缺失且无 Dn/TODO 锚点（Critical）"——**驳回**：federation 登记完备：`Providers/AnthropicProvider.cs:13,87` `TODO(后续扩展,D15)` + 台账 D15 行（目标=后续扩展、验收测试 `S5ProviderProfileTests.Anthropic_Without_Env_Or_Credential_Returns_Null`）+ S5 spec §10.2 federation 行。federation 位于 provider 认证链（AnthropicProvider）而非 API 适配器（AnthropicMessages），采集者在错误层级查找。登记链完整，判定 C 合规。
 2. S3/S4 采集报告把"流式参数 partial 不生长"标为"无锚点的未登记偏离"——**部分修正**：S4 §10 行447/462 与 S5 §10.2 已明确登记该行为裁剪；缺的是台账 Dn 行（降为治理缺口 G-1）。
-3. **U-2（`maxTokens > 0` 守卫）——控制器裁定驳回**（2026-11-09）：审计称“pi 只判 `options?.maxTokens`（显式 0 也发送）”不成立。pi 为 JS 真值判断：`if (options?.maxTokens)`（`openai-completions.ts:826`）、`if (options?.maxTokens && ...)`（`openai-responses.ts:373`）——`0` 是 falsy，**pi 不发 0**。我们 `OpenAiCompletions.cs:870` / `OpenAiResponses.cs:543` 的 `> 0` 守卫与 pi 一致；反倒是 pi.net 用 C# `is { }` 判定会发送 0，属 pi.net 偏离 pi。故 U-2 不是偏离，不补登记、不修复。
+3. **U-2（`maxTokens > 0` 守卫）——控制器裁定驳回**（2026-11-09）：审计称“pi 只判 `options?.maxTokens`（显式 0 也发送）”不成立。pi 为 JS 真值判断：`if (options?.maxTokens)`（`openai-completions.ts:826`）、`if (options?.maxTokens && ...)`（`openai-responses.ts:373`）——`0` 是 falsy，**pi 不发 0**。我们 `OpenAiCompletions.cs:870` / `OpenAiResponses.cs:543` 的 `> 0` 守卫与 pi 一致；pi.net 的 OpenAI 适配器同样有 `> 0` 守卫（`Pi.Ai/Api/OpenAiCompletions.cs:1083`），即两家 C# 移植在 0 值上都与 pi 同向（个别非 OpenAI 适配器如 Google 用裸 `is { }`，与本条无关）。故 U-2 不是偏离，不补登记、不修复。
 
 **无法验证项**：
 - pi 上游 `providers/data/*.json` 不在本地 checkout（仅 data-json.d.ts），19 份模型目录 JSON 只能与 pi.net 快照对数（抽样 anthropic/fireworks/openai 逐字段一致）；与 pi 最新生成物的代差需在 D9 补一次上游对数。
