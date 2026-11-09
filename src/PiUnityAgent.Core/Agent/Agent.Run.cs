@@ -87,6 +87,7 @@ public sealed partial class Agent
                 : ToThinkingLevel(thinkingLevel),
         };
 
+        var skipPoll = skipInitialSteeringPoll;
         return new AgentLoopConfig
         {
             Model = _state.Model,
@@ -103,8 +104,16 @@ public sealed partial class Agent
             AfterToolCall = AfterToolCall,
             StreamOptions = streamOptions,
             Identity = Identity,
-            GetSteeringMessages = null,
-            GetFollowUpMessages = null,
+            GetSteeringMessages = () =>
+            {
+                if (skipPoll)
+                {
+                    skipPoll = false;
+                    return Task.FromResult<IReadOnlyList<Message>>(Array.Empty<Message>());
+                }
+                return Task.FromResult(_steeringQueue.Drain());
+            },
+            GetFollowUpMessages = () => Task.FromResult(_followUpQueue.Drain()),
         };
     }
 
