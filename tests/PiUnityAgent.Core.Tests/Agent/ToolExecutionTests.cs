@@ -102,6 +102,19 @@ public class ToolExecutionTests
     }
 
     [Fact]
+    public async Task Before_Hook_Throw_Becomes_Error_Outcome()
+    {
+        var config = Config() with
+        {
+            BeforeToolCall = (_, _) => throw new InvalidOperationException("hook boom"),
+        };
+        var outcome = await ToolExecution.RunToolCallAsync(
+            Call(), Assistant(), Context(Echo()), config, CancellationToken.None);
+        Assert.True(outcome.IsError);
+        Assert.Equal("hook boom", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
+    }
+
+    [Fact]
     public async Task Execute_Throw_Becomes_Error_With_Duration()
     {
         var tool = Echo() with
