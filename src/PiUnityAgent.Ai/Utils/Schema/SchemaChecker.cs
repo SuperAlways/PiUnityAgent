@@ -13,6 +13,7 @@ namespace PiUnityAgent.Ai.Utils.Schema;
 /// <c>default</c>, <c>$comment</c>, …) are ignored; <c>unevaluatedProperties</c>/<c>unevaluatedItems</c> and
 /// <c>$dynamicRef</c> are not supported (no tool schema uses them).
 /// </summary>
+/// TODO(后续扩展, D21): unevaluatedProperties/Items、书签 $dynamicRef 动态作用域、hostname/idn-hostname format 未移植。
 internal sealed class SchemaChecker
 {
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);

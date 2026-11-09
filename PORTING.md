@@ -83,6 +83,16 @@
 
 ---
 
+## 3A. S6 工具契约补充映射（2026-11-09）
+
+| pi 源 | 我们的落点 | 状态 |
+|---|---|---|
+| `packages/agent/src/types.ts`（工具段 `AgentTool/AgentToolResult/AgentToolUpdateCallback`） | `src/PiUnityAgent.Core/Tools/*` | ✅ S6 |
+| `packages/ai/src/utils/validation.ts` | `src/PiUnityAgent.Ai/Utils/ToolValidation.cs` | ✅ S6 |
+| `packages/schema/src/*`（compiler/coerce/checks/explain/formats/resolver） | `src/PiUnityAgent.Ai/Utils/Schema/*`（internal 子集） | 🟡 S6（D21 缺三项） |
+
+---
+
 ## 4. 偏离登记规则
 
 1. 任何**改名、拆分、裁剪**都写进本表"偏离说明"，不静默处理。
