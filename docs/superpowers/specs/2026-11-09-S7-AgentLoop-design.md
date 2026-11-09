@@ -1,6 +1,6 @@
 # S7 Agent Loop 设计 spec（2026-11-09）
 
-> **状态**：设计稿 v1，待用户 review 后进入 plan。
+> **状态**：v1 已实现（Tasks 1–7 落于 `feature/s7-agent-loop`）；独立审计 FAIL→修复→新审计者复核 **PASS_WITH_REGISTERED_DEVIATIONS**（`docs/audits/2026-11-09-S7-deviation-audit.md` / `-recheck.md`）；待用户验收合 main。
 > **范围**：S7 = 低层 agent 循环：turn 调度、助手流式响应、工具调用批次执行（串/并行）、事件序列、tool-call 单调用管线与 hooks 调用点；同时承接 S6 遗留的 D16（流式参数 partial 快照 + repairJson）。不做 Agent 门面/双队列/abort 集成（S8）、上下文组装/system prompt（S9）、会话持久化（S10）。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实，S7 不引用）。
 > **上位规则**：[`docs/03-开发方法-拆解学习与移植约定.md`](../../03-开发方法-拆解学习与移植约定.md) §1.3；[`docs/05-教学阶段路线.md`](../../05-教学阶段路线.md) §S7；[`docs/SOP/阶段偏离审查-SOP-2026-11-08.md`](../../SOP/阶段偏离审查-SOP-2026-11-08.md)。
