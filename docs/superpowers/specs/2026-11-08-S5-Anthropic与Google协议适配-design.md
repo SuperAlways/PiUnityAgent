@@ -210,7 +210,7 @@ public static class GoogleGenerativeAi
 | OAuth HTTP | 全局 fetch/SDK | HttpClient | 注入 `FetchFunction`（profile 工厂 `Create(FetchFunction? oauthFetch)`，宿主注入） | B/D | profile 工厂多一个可选 fetch 参数 |
 | OAuth fetch 注入缝 | lazyOAuth 内闭包 | HttpClient | `AuthHelpers.LazyOAuth` + 工厂参数 | B/D | 同上 |
 | OAuth 超时 | `AbortSignal.timeout(30s)` / linked CTS | HttpClient timeout | `FetchOptions{Connect,FirstByte,Idle}=30s`（刷新锁内 15s 同 pi） | B/D | 超时执行归宿主传输 |
-| OAuth 浏览器回调 | loopback 服务器 + manual 竞速 | callback server | 仅 copy-code/manual；Anthropic browser 选项选中 → `NotSupportedException`；无 `Listening for callback...` progress 事件（manual-only 下不真） | C | 浏览器自动回调后置 |
+| OAuth 浏览器回调 | loopback 服务器 + manual 竞速 | callback server | 仅 copy-code/manual；Anthropic browser 选项选中 → `NotSupportedException`；无 `Listening for callback...` progress 事件（manual-only 下不真） | C/D20 | 浏览器自动回调后置 |
 | OpenRouter redirect | 临时端口 loopback | callback server | 固定回环常量 `http://localhost:53693/oauth/callback`（构造参数可覆盖；pi 无固定端口参照，Task 6 选定） | C | 审计可改宿主注入；交换正确性不依赖它 |
 | login abort 竞速 | mutation-started 侦听 race | — | 顺序流 + store 边界 ct 检查（锁等待可取消、取消不落盘；刷新在途取消对轮换免疫=pi 同口径） | D | 行为等价面，无竞速结构 |
 | `expires_in` 校验 | TS 无校验（缺键→undefined 静默） | 显式校验 | 三键（refresh/access/expires）缺一 → `invalid JSON` | C（采 pi.net） | 更严；C# 可空安全所需 |
@@ -219,25 +219,28 @@ public static class GoogleGenerativeAi
 | Google 自定义 fetch | pi 拒绝 | — | Fetch 端口统一 | B/D | 无 |
 | 共享 helper 私有副本 | 共享 util（transform-messages/strict-sampling/错误格式化等） | 同左左源 | 各适配器私有拷贝（4+ 份） | D/TODO | 去重需跨文件重构，留统一批次 |
 | 默认头 null 抑制扩展 | `createClient` 默认头合并 | 同 | `IsHeaderSuppressed` 扩展：默认头也可被 null 抑制（S4 无此行为） | D | 更灵活；与 pi 默认头合并语义有扩展面（审计补登记） |
+| FileCredentialStore 跨进程互斥 | `credential-store.ts:82-84` 要求 backing store 支持时跨进程 | — | 仅进程内 per-provider `SemaphoreSlim`（无文件锁） | C/低 | 多进程共写同一 auth.json 不在保证范围（D7 备注已述）；2026-11-09 审计 U-7 补登记 |
 
 ### 10.2 Anthropic
 
 | 项 | pi | pi.net | 我们 | 类别 | 代价 |
 |---|---|---|---|---|---|
-| copilot 头分支 | createClient 的 github-copilot Bearer + 动态头 | — | 未实现 | C | copilot 非 S5 profile；需要时另立项 |
+| copilot 头分支 | createClient 的 github-copilot Bearer + 动态头 | — | 未实现 | C | copilot 非 S5 profile；需要时另立项（并入 §10.4 范围行，无独立 Dn） |
 | federation（工作负载身份联合） | anthropic.ts:53-69 env 兜底 | — | 未实现，env 链末尾返回 null，源码 `TODO(后续扩展,D15)` | C/D15 | 台账 D15 行（后续扩展） |
 | betas | SDK 把 params.betas 转 `anthropic-beta` 头 | 同 | `BuildRequest` 出体转头，OnPayload 仍可见 betas | B | 行为等价 |
 | `AnthropicOptions.Effort` 形状 | `AnthropicEffort` 字符串 union | 未移植 | `ThinkingLevel?` 枚举（含 Minimal） | B/D | StreamSimple 字符串→枚举回转；映射缺失按 pi default 回落 high |
 | SSE 事件读取 | `response.body` ReadableStream + 自带 consume | HttpClient 流 | 既有 `SseEventReader`（S4 定型） | B | 语义等价；解析失败消息只含 data |
 | JSON 解析 | `parseJsonWithRepair`（容错修复） | 严格 | `JsonNode.Parse`（严格） | C | 坏 data 终态 Error 而非尽力修复 |
 | message_start 无 usage | 直取（缺失 TypeError→终态 Error） | 同款守卫 | usage 缺失保留零值继续 | C | 更稳；真实 API 必带 usage |
-| toolcall delta partial 参数 | `append` 即时渐进解析并写回块 | — | `ToolCallArguments.Append` 只累积原文，`content_block_stop` 一次 Finish | C | 过程中参数预览停在初始值；终值与 pi 一致；补齐需 parse-so-far 解析器 |
+| toolcall delta partial 参数 | `append` 即时渐进解析并写回块 | — | `ToolCallArguments.Append` 只累积原文，`content_block_stop` 一次 Finish | C/D16 | 过程中参数预览停在初始值；终值与 pi 一致；补齐需 parse-so-far 解析器 |
 | OpenRouter 实付覆盖 helper | 共享 util `openrouter-cost.ts` | 同源 | `OpenAiCompletions`/`AnthropicMessages` 各一份私有拷贝 | D/TODO | 去重候选（提 internal 会反向依赖，留统一批次） |
 | StreamSimple 缺 key | SDK 抛异常 | — | 终态 `Error` 事件（无请求发出） | B | 与全适配器统一终态口径一致 |
 | 基类 options 透传 | 对象展开（TS 结构兼容） | 逐字段平铺 | 每适配器 `ToXxxOptions(StreamOptions?)` 逐字段拷贝转换器（Task 5b 修复） | D | 公开签名零改动；新基类字段需同步转换器清单 |
 | strict-fallback 重发 | stream 循环 | — | 已实现（Task 3，非偏离） | — | `HasPreferredStrictTools` + 诊断三件套 |
 | `AnthropicOptions.client` | 预构建 SDK client 注入 | 有 | 未移植（无 Anthropic SDK 类型；Fetch 端口承担注入缝） | A | SDK-only 形状；宿主通过 Fetch 注入，无行为差异 |
 | StreamSimple `reasoning=off`（非自适应） | 退化 NaN / `max_tokens:null` | — | 兜底 16384 | D | 更稳健；与 pi 病态路径不同（审计补登记） |
+| Anthropic fallback 计价 tiers | fallback 模型带整个 cost 对象（含 tiers，`anthropic-messages.ts:710-716`） | — | 只取四速率（`AnthropicMessages.cs:500-508`），丢 `cost.tiers` | C/低 | fallback 模型阶梯计价缺失；2026-11-09 审计 U-8 补登记 |
+| 空串 stop_reason | truthy 跳过（`anthropic-messages.ts:841`） | 同款 null 判定 | 已修：`Length > 0` 守卫跳过空串（`AnthropicMessages.cs:736`） | B | 2026-11-09 审计 U-9 修复，回归 pi 语义 |
 
 ### 10.3 Google
 
@@ -253,6 +256,7 @@ public static class GoogleGenerativeAi
 | 流形态 | SDK 走 `alt=sse` | 同 | 仅 `alt=sse`；JSON（非 SSE）形态未实现 | C | pi SDK 亦只走 alt=sse |
 | StreamSimple context 估算 | 共享 estimate util | — | 每适配器私有 `EstimateContextTokens`（4096 安全余量） | D/TODO | 与 §10.1 helper 副本同类，去重候选 |
 | StreamSimple 缺 key | SDK 抛异常 | — | 终态 `Error` 事件（无请求发出） | B | 同 Anthropic 口径 |
+| 流中 error chunk | `@google/genai` SDK 实际行为待实机 | — | 无 candidates/usageMetadata 的 chunk 跳过，终态报 `Google stream ended without a finish reason`（`GoogleGenerativeAi.cs:296-317`） | C/观察 | 2026-11-09 审计 U-10：实机探测若 SDK 抛错误体则升 Important 并补解析 |
 
 ### 10.4 范围
 

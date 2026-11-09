@@ -444,27 +444,28 @@ public static class GroqProvider
 | Responses input items | `convertResponsesMessages` | JsonObject 手写 | 同语义 | B | 事件层仍翻译成 S2 事件 |
 | provider profile | 45+ provider 定义 | 50 文件 | 首批 8 家 family（含 CN/区域变体） | C/D9 | 覆盖收敛；其余 profile 增量接 |
 | 模型数据 | pi 全量 models | JSON 全量 | 首批子集 | C/D9 | 只做 S4 实际模型；后续补数据 |
-| tool_calls 参数流 partial 快照 | `StreamingJsonParser` 容错部分解析，delta 间 `block.arguments` 显示部分 JSON | 同 | 仅原始文本累积（Task 4 `ToolCallArguments` 最小端口），块 Arguments 在 ToolCallEnd/output_item.done 才成完整 JsonObject | C | Task 4 已定型的最小基础设施；`ToolCallDelta` 仍携带原始文本增量，进度在 delta 流上可见（Task 5/6） |
+| tool_calls 参数流 partial 快照 | `StreamingJsonParser` 容错部分解析，delta 间 `block.arguments` 显示部分 JSON | 同 | 仅原始文本累积（Task 4 `ToolCallArguments` 最小端口），块 Arguments 在 ToolCallEnd/output_item.done 才成完整 JsonObject | C/D16 | Task 4 已定型的最小基础设施；`ToolCallDelta` 仍携带原始文本增量，进度在 delta 流上可见（Task 5/6） |
 | 非法工具参数 | `parseToolCallArguments` 永不抛 → `argumentsError` 落块 + 正常 Done | 同 | catch `ToolCallArguments.Finish()` 的 JsonException → ArgumentsError + 正常 Done | B | 按 pi 真实语义实现（Task 5/6 各有聚焦用例）；Task 4 旧注释语义以本表为准 |
 | StreamSimple 缺 key 时机 | 同步 throw（返回流之前） | 同 | 全部进流内 catch → 终态 Error | B | 全局约束"provider 流不得抛出"；代价=StreamSimple 不再同步报缺 key（Task 5/6） |
-| D2 刷新并发模型 | `Promise.all` 并发 + per-provider generation/AbortController 去抖；`structuredClone(persist)` 落库 | 同 pi 语义 | 顺序 for + 单 CancellationToken，无 generation 去抖；publication 原引用落库 | C/D | Unity netstandard2.1 顺序化收益/复杂度权衡；`ModelsStoreEntry` 为 init-only record 无别名突变面（Task 8A `24e4d80`） |
+| D2 刷新并发模型 | `Promise.all` 并发 + per-provider generation/AbortController 去抖；`structuredClone(persist)` 落库 | 同 pi 语义 | 顺序 for + 单 CancellationToken，无 generation 去抖；publication 原引用落库 | C/D | Unity netstandard2.1 顺序化收益/复杂度权衡；`ModelsStoreEntry` 为 init-only record 无别名突变面（Task 8A `24e4d80`）；另：无 generation/AbortController supersede（SetProvider/DeleteProvider 不作废在途刷新）与刷新错误收集缺 !signal.aborted 守卫（2026-11-09 审计 U-5/U-6 补登记） |
 | 过期 stored OAuth 刷新凭据 | `refreshStoredOAuthCredential` 轮换 + 持久化 | 同 | 过期视为无有效凭据并跳过网络阶段；`TODO(S5,D1)` 锚落码 | C/D1 | OAuth 轮换归 D1/S5；代价=过期 OAuth 的 provider 不自动刷目录（Task 8A）（2026-11-09 现势：D1/S5 已完成，`ResolveStoredOAuthAsync` 5 分钟窗口刷新+15s 超时并写回；`TODO(S5,D1)` 已移除） |
 | Hosts.Net8 Fetch 适配器 | SDK fetch | HttpClient + 手写 SSE | `TransportFetch`（`IStreamingHttpTransport`→Fetch 端口）+ `HttpClientFetch` | B | 唯一 transport 缝在 Hosts；Ai 层零 transport 引用；Unity 运行时 link.xml/防裁剪配置未 vendored（S13 落地时补） |
 | ModelCatalog JSON 字段口径 | `models.generated.ts` 编译期数据 | `ModelData/*.json` | JSON 内 `provider` 字段优先于目录 key（plan 钉死）；条目缺 `type` 缺省 chat | B | 与 pi.net ModelCatalog 兼容；`chat:` 前缀 + `type != chat` 双保险过滤（Task 7） |
 | 协议适配器辅助代码重复 | — | — | `OpenAiCompletions.cs`/`OpenAiResponses.cs` 内联重复约 1300 行私有辅助 | D/TODO | 收编债务：后续以一次性 mechanical 提取下沉 `Api/OpenAiShared.cs`（§4 预留位）；不得再造第三份拷贝（Task 6 报告遗留 #1） |
-| OAuth/ChatGPT sign-in | openai/xai OAuth | OAuth 实现 | API Key 先行 | C/D1 | OAuth 行为 S5；ChatGPT sign-in 限制字段（isChatGPTSignIn/omitUnsupportedFields/订阅限额文案）不实现（Task 6） |
+| OAuth/ChatGPT sign-in | openai/xai OAuth | OAuth 实现 | API Key 先行 | C/D18 | OAuth 行为 S5 已完成 Anthropic/OpenRouter；OpenAI/ChatGPT sign-in 限制字段（isChatGPTSignIn/omitUnsupportedFields/订阅限额文案）不实现（D18） |
 | Anthropic/Google | S5 | S5 | S4 不做 | C | S5 另立 spec |
 | 全局 ApiRegistry | `compat.registerApiProvider` | `ApiRegistry` | 不新增；ProviderFactory 分派 | C/D | 避免重复分派层；动态注册后续按需 |
-| `retryAssistantCall` | 上层 agent 重试 | 上层 | S4 不实现 | C | S4 只做 provider 首字节前重试 |
+| `retryAssistantCall` | 上层 agent 重试 | 上层 | S4 不实现 | C/D17 | S4 只做 provider 首字节前重试（台账 D17，目标 S8） |
 | transcript 完整重放 | S9 | S9 | S4 只 normalize | C/D11 | S9 承接 D11 |
 | 图片/分类 | S4/S5 范围外 | 有 | 不做 | C/D4/D5 | 2B 后置 |
 | ProviderRetry 无状态码错误 | 无 statusCode 一律重试（含 TLS/DNS；`provider-retry.ts:30`） | 同 | 仅 `Kind == Connect` 或传输层 `IsRetryable` 重试（`Api/ProviderRetry.cs:55-56`） | D | 尊重 UnityLlmTransport 的显式 `IsRetryable=false`，避免对永久性 TLS/代理/协议配置错误空转；代价=TLS 故障少一次自愈机会；`ProviderRetryTests` 锁定 |
-| `ToolCallArguments` 修复 JSON | `parseJsonWithRepair` 先原样 parse，失败后 `repairJson` 再试（`utils/json-parse.ts:33-120`） | 同 | `Finish()` 只做一次 `JsonNode.Parse`；可修复的裸控制字符/非法转义落 ArgumentsError（`Api/ToolCallArguments.cs:33-46`） | C | 最小端口；畸形参数可救的调用判失败；repairJson 端口归后续（不改变形状） |
+| `ToolCallArguments` 修复 JSON | `parseJsonWithRepair` 先原样 parse，失败后 `repairJson` 再试（`utils/json-parse.ts:33-120`） | 同 | `Finish()` 只做一次 `JsonNode.Parse`；可修复的裸控制字符/非法转义落 ArgumentsError（`Api/ToolCallArguments.cs:33-46`） | C/D16 | 最小端口；畸形参数可救的调用判失败；repairJson 端口归后续（不改变形状） |
+| Responses output_item 缺 `item` | 缺失→直接用 `event.item` 抛错→Error 终态（responses-shared.ts:675-676/746-749） | 同 | `item` 非对象时跳过该事件（`OpenAiResponses.cs:1557-1560/1654`） | D/低 | 对不合规服务端更宽容；2026-11-09 审计 U-3 补登记 |
 | `GetClientVersion` 版本源 | `PI_AI_VERSION="1.5.0"`（`utils/version.ts:2`） | — | identity.Version 优先，缺省 Ai 程序集 Major.Minor.Build（`Types/ClientIdentityHelpers.cs:26-34`） | A/B | C# 无 PI_AI_VERSION 常量；代价=UA 版本段随构建版本漂移 |
 | Responses 错误文案前缀 | `OpenAI API error (400): …`（`openai-responses.ts:253-256`） | — | `400: …`（`OpenAiResponses.cs:216`） | B/低 | 纯文案差异；completions 侧 pi 本无前缀，S4 两侧统一 |
 | `Usage.Reasoning` 缺省 | 恒数值（`|| 0`） | 恒 0 | 未上报时 null（`OpenAiCompletions.cs:2708`、`OpenAiResponses.cs:1499-1500`（1499 单行形似恒 0，必须连读 1500）） | D/低 | S3 `Usage.Reasoning` 为 int?；代价=终止消息少 `reasoning:0` 键 |
 | ModelCatalog 缺资源 | 编译期数据；pi.net 缺 JSON 抛 FileNotFoundException | — | 缺嵌入资源返回空表（`Providers/ModelCatalog.cs:27`） | B/低 | 拼错 providerId 得到空目录，排障更隐蔽；`S4ProviderProfileTests` 锁定 unknown→empty |
-| ModelCatalog `promptCache` | `Model.promptCache` 数据 | JSON 可含 | 解析器不填充 `Model.PromptCache`（`Providers/ModelCatalog.cs:50-132`） | C/低 | 当前 12 份 JSON 无此键；接入含 promptCache 的目录数据时补 |
+| ModelCatalog `promptCache` | `Model.promptCache` 数据 | JSON 可含 | 解析器不填充 `Model.PromptCache`（`Providers/ModelCatalog.cs:50-132`） | C/D19 | 当前 12 份 JSON 无此键；接入含 promptCache 的目录数据时补 |
 | `x-should-retry` 头比较 | 精确 `"true"/"false"`（`provider-retry.ts:26-28`） | — | `OrdinalIgnoreCase`（`Api/ProviderRetry.cs:51-52`） | B/低 | `"True"` 会识别、pi 落 status 判定；可后续改 Ordinal |
 | retry-after 解析宽容度 | `Number.parseFloat` 前缀取数（`provider-retry.ts:56`） | — | `double.TryParse` 全串；无时区 HTTP 日期 `AssumeUniversal`（`Api/ProviderRetry.cs:79-99`） | B/低 | 尾随垃圾落指数退避；常见 GMT 形态一致 |
 | `ClientIdentity` attribution 哨兵 | Plain JSON 可持久化，`attribution:null` 显式关闭 | — | `AttributionSet` 私有哨兵不可 STJ 往返（`Types/ClientIdentity.cs`） | C/低 | S4 不持久化 identity；D7 持久化时补 |
