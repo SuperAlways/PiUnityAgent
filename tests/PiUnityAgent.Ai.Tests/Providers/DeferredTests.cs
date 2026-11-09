@@ -39,7 +39,7 @@ public class DeferredProviderCapabilityTests
     };
 
     [Fact]
-    public void StaticProvider_Reports_Capability_From_Delegates_And_Throws_When_Missing()
+    public async Task StaticProvider_Reports_Capability_From_Delegates_And_Throws_When_Missing()
     {
         var model = Model();
         var without = ProviderTestSupport.CreateProvider("p1");
@@ -55,14 +55,14 @@ public class DeferredProviderCapabilityTests
         var deferred = Assert.IsAssignableFrom<IDeferredProvider>(with);
         Assert.True(deferred.SupportsFetchDeferred);
         Assert.True(deferred.SupportsCancelDeferred);
-        var message = Assert.IsType<AssistantMessage>(deferred.StreamDeferred(model, Handle(), null)
-            .WaitForDoneAsync().Result);
+        var message = Assert.IsType<AssistantMessage>(await deferred.StreamDeferred(model, Handle(), null)
+            .WaitForDoneAsync());
         Assert.Equal(StopReason.Deferred, message.StopReason);
         Assert.Equal("d1", message.Deferred!.Id);
     }
 
     [Fact]
-    public void FactoryProvider_Exposes_Deferred_From_Api_Streams()
+    public async Task FactoryProvider_Exposes_Deferred_From_Api_Streams()
     {
         var model = Model();
         var capturedHandle = Handle("d2");
@@ -91,11 +91,11 @@ public class DeferredProviderCapabilityTests
         Assert.True(deferred.SupportsFetchDeferred);
         Assert.True(deferred.SupportsCancelDeferred);
 
-        var message = Assert.IsType<AssistantMessage>(deferred.StreamDeferred(model, Handle("d2"), null)
-            .WaitForDoneAsync().Result);
+        var message = Assert.IsType<AssistantMessage>(await deferred.StreamDeferred(model, Handle("d2"), null)
+            .WaitForDoneAsync());
         Assert.Equal(StopReason.Deferred, message.StopReason);
 
-        deferred.CancelDeferredAsync(model, Handle("d3"), null).GetAwaiter().GetResult();
+        await deferred.CancelDeferredAsync(model, Handle("d3"), null);
         Assert.Equal("d3", capturedHandle.Id);
     }
 
