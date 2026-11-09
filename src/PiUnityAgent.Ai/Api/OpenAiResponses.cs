@@ -50,7 +50,7 @@ internal sealed record OpenAiResponsesCompat
 /// tools 转换（function/grammar）、SSE 输出项状态机（output_index 槽位、reasoning summary/text、
 /// function/custom tool call 参数流、usage/service tier 定价、status→stopReason）。
 /// 通讯走 <see cref="FetchFunction"/> 端口（pi 里由 OpenAI SDK 承担）；失败一律编码为流内终态，不抛出。
-/// ChatGPT sign-in 限制字段不在本实现（D1/S5）。
+/// ChatGPT sign-in 限制字段不在本实现（TODO(后续扩展, D18)：非 sk- 令牌省略 prompt_cache_* / max_output_tokens / temperature）。
 /// </summary>
 public static class OpenAiResponses
 {
@@ -452,7 +452,7 @@ public static class OpenAiResponses
             ? "openrouter"
             : "openai";
 
-    /// <summary>pi getConfigurationUpdateEffort 107–122（ChatGPT sign-in 分支属 D1/S5，不实现）。</summary>
+    /// <summary>pi getConfigurationUpdateEffort 107–122（ChatGPT sign-in 分支属 D18，不实现）。</summary>
     private static string? GetConfigurationUpdateEffort(
         Model model, OpenAiResponsesOptions? options, OpenAiResponsesCompat compat)
     {

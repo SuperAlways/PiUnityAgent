@@ -75,11 +75,11 @@ public sealed class AnthropicOAuth
             return await LoginByCopyCodeAsync(interaction, cancellationToken).ConfigureAwait(false);
         }
 
-        // browser 分支的 loopback 回调服务器按 spec §10 C 偏离后置；未知方式沿用 pi 文案。
+        // browser 分支的 loopback 回调服务器按 spec §10.1 C 偏离后置。
         if (method == BrowserLoginMethod)
         {
             throw new NotSupportedException(
-                "Anthropic browser login requires the loopback callback server, which is deferred; use copy_code login.");
+                "Deferred to 后续扩展: browser OAuth loopback callback (D20); use copy_code login.");
         }
         throw new InvalidOperationException($"Unknown Anthropic login method: {method}");
     }

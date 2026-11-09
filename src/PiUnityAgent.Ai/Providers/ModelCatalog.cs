@@ -49,6 +49,7 @@ public static class ModelCatalog
 
     private static Model? ParseChatModel(string catalogProviderId, JsonObject spec)
     {
+        // TODO(后续扩展, D19): 目录 promptCache 字段暂不解析（pi Model.promptCache）。
         string? GetString(string key)
             => spec[key] is JsonValue { } value && value.TryGetValue<string>(out var text) ? text : null;
 

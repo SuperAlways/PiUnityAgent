@@ -281,10 +281,11 @@ public class OAuthTests
     {
         var oauth = new AnthropicOAuth(new MockFetch().Fetch);
 
-        // browser 分支依赖 loopback 回调服务器（spec §10 C 偏离，后置）——报 NotSupportedException。
-        await Assert.ThrowsAsync<NotSupportedException>(() =>
+        // browser 分支依赖 loopback 回调服务器（D20，后置）——报 NotSupportedException。
+        var browserError = await Assert.ThrowsAsync<NotSupportedException>(() =>
             oauth.ToOAuthAuth().Login(
                 new ProviderAuthInteraction(CannedInteraction.CopyCode("browser"), default), null, default));
+        Assert.Contains("D20", browserError.Message, StringComparison.Ordinal);
     }
 
     [Fact]

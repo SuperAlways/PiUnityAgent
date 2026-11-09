@@ -10,6 +10,7 @@ namespace PiUnityAgent.Ai.Api;
 /// 保存原始文本，不解析中间片段——未完成 JSON 绝不暴露给 partial 事件；
 /// 完整文本只在这条 tool call 结束时用 <see cref="Finish"/> 解析一次。
 /// </summary>
+/// TODO(S7, D16): delta 期间暴露可解析的部分 JSON（pi streaming-json.ts）；当前仅终点严格解析。
 internal sealed class ToolCallArguments
 {
     private readonly StringBuilder _text = new();
