@@ -191,4 +191,62 @@ public sealed partial class Models
         if (request is not null) foreach (var entry in request) merged[entry.Key] = entry.Value;
         return merged;
     }
+
+    private static DeferredFetchOptions ApplyAuthOptions(
+        Model model,
+        DeferredFetchOptions? options,
+        AuthResult auth)
+    {
+        options ??= new DeferredFetchOptions();
+        var sessionHeaders = ClientIdentityHelpers.GetOpenCodeSessionHeaders(
+            new ClientIdentityTarget(model.Provider, model.BaseUrl), options.SessionId) is { } session
+            ? session.ToDictionary(entry => entry.Key, entry => (string?)entry.Value)
+            : null;
+        var headers = MergeHeaders(sessionHeaders, MergeHeaders(auth.Auth.Headers, options.Headers));
+        var env = MergeEnv(auth.Env, options.Env);
+        return options with
+        {
+            ApiKey = options.ApiKey is null ? auth.Auth.ApiKey : options.ApiKey,
+            Headers = headers,
+            Env = env,
+        };
+    }
+
+    private static DeferredCancelOptions ApplyAuthOptions(
+        Model model,
+        DeferredCancelOptions? options,
+        AuthResult auth)
+    {
+        options ??= new DeferredCancelOptions();
+        var sessionHeaders = ClientIdentityHelpers.GetOpenCodeSessionHeaders(
+            new ClientIdentityTarget(model.Provider, model.BaseUrl), options.SessionId) is { } session
+            ? session.ToDictionary(entry => entry.Key, entry => (string?)entry.Value)
+            : null;
+        var headers = MergeHeaders(sessionHeaders, MergeHeaders(auth.Auth.Headers, options.Headers));
+        var env = MergeEnv(auth.Env, options.Env);
+        return options with
+        {
+            ApiKey = options.ApiKey is null ? auth.Auth.ApiKey : options.ApiKey,
+            Headers = headers,
+            Env = env,
+        };
+    }
+
+    private DeferredFetchOptions ApplyIdentity(DeferredFetchOptions options)
+    {
+        var identity = ClientIdentityMerger.Merge(_identity, options.Identity);
+        return identity is null ? options : options with { Identity = identity };
+    }
+
+    private static async Task<DeferredFetchOptions> ApplyTransformHeaders(
+        DeferredFetchOptions options,
+        CancellationToken cancellationToken)
+    {
+        var transform = options.TransformHeaders;
+        if (transform is null) return options;
+        cancellationToken.ThrowIfCancellationRequested();
+        var headers = await transform(options.Headers ?? new Dictionary<string, string?>())
+            .ConfigureAwait(false);
+        return options with { Headers = headers, TransformHeaders = null };
+    }
 }

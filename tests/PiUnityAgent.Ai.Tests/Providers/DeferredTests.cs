@@ -150,3 +150,107 @@ public class DeferredProviderCapabilityTests
         Assert.False(deferred.SupportsCancelDeferred);
     }
 }
+
+public class DeferredModelsTests
+{
+    private static Model Model() => ProviderTestSupport.CreateModel("m1", "p1");
+
+    private static DeferredHandle Handle(string id = "d1") => new()
+    {
+        Provider = "p1",
+        ModelId = "m1",
+        Api = "faux",
+        Id = id,
+    };
+
+    private static IAssistantMessageEventStream Done(Model model, StopReason reason)
+    {
+        var stream = new AssistantMessageEventStream();
+        var message = new AssistantMessage
+        {
+            Content = Array.Empty<ContentBlock>(),
+            Api = model.Api,
+            Provider = model.Provider,
+            Model = model.Id,
+            Usage = new Usage(),
+            StopReason = reason,
+            Timestamp = 1,
+        };
+        stream.Push(new AssistantMessageEvent.Done(reason, message));
+        stream.End(message);
+        return stream;
+    }
+
+    [Fact]
+    public async Task Unsupported_Provider_Becomes_Error_Terminal_And_Cancel_Throws()
+    {
+        var models = new Models();
+        models.SetProvider(ProviderTestSupport.CreateProvider("p1"));
+        var handle = Handle();
+
+        var final = await models.StreamDeferred(Model(), handle).WaitForDoneAsync();
+        Assert.Equal(StopReason.Error, final.StopReason);
+        Assert.Equal("Provider p1 does not support deferred responses", final.ErrorMessage);
+
+        var fetched = await models.FetchDeferredAsync(Model(), handle);
+        Assert.Equal(StopReason.Error, fetched.StopReason);
+        Assert.Equal("Provider p1 does not support deferred responses", fetched.ErrorMessage);
+
+        var error = await Assert.ThrowsAsync<ModelsError>(
+            () => models.CancelDeferredAsync(Model(), handle));
+        Assert.Equal(ModelsErrorCode.Provider, error.Code);
+        Assert.Equal("Provider p1 does not support deferred responses", error.Message);
+    }
+
+    [Fact]
+    public async Task Auth_BaseUrl_Overlays_Before_Provider_Fetch()
+    {
+        Model? seen = null;
+        var auth = new PiUnityAgent.Ai.Providers.Auth.ProviderAuth
+        {
+            ApiKey = new PiUnityAgent.Ai.Providers.Auth.ApiKeyAuth
+            {
+                Name = "keyless",
+                Resolve = (_, _) => Task.FromResult<PiUnityAgent.Ai.Providers.Auth.AuthResult?>(
+                    new PiUnityAgent.Ai.Providers.Auth.AuthResult(
+                        new PiUnityAgent.Ai.Providers.Auth.ModelAuth
+                        {
+                            BaseUrl = "https://proxy.example/v1",
+                        },
+                        null,
+                        "test")),
+            },
+        };
+
+        var model = Model();
+        var provider = new StaticProvider(
+            "p1", "p1", new[] { model }, ProviderTestSupport.DoneStream, auth,
+            fetchDeferred: (requestModel, handle, options) =>
+            {
+                seen = requestModel;
+                return Done(requestModel, StopReason.Deferred);
+            });
+
+        var models = new Models();
+        models.SetProvider(provider);
+        await models.StreamDeferred(model, Handle()).WaitForDoneAsync();
+
+        Assert.NotNull(seen);
+        Assert.Equal("https://proxy.example/v1", seen!.BaseUrl);
+    }
+
+    [Fact]
+    public async Task FetchDeferredAsync_Returns_Stream_Result()
+    {
+        var model = Model();
+        var provider = new StaticProvider(
+            "p1", "p1", new[] { model }, ProviderTestSupport.DoneStream,
+            ProviderTestSupport.KeylessAuth(),
+            fetchDeferred: (requestModel, handle, options) => Done(requestModel, StopReason.Stop));
+
+        var models = new Models();
+        models.SetProvider(provider);
+        var message = await models.FetchDeferredAsync(model, Handle());
+        Assert.Equal(StopReason.Stop, message.StopReason);
+    }
+}
