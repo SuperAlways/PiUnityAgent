@@ -98,7 +98,7 @@ public sealed partial class Agent
                 : (provider, _) => GetApiKey(provider),
             FinishTurn = FinishTurn,
             PrepareRequest = PrepareRequest,
-            PrepareNextTurn = null,
+            PrepareNextTurn = CreateLoopPrepareNextTurn(),
             ToolExecution = ToolExecution,
             BeforeToolCall = BeforeToolCall,
             AfterToolCall = AfterToolCall,
@@ -114,6 +114,36 @@ public sealed partial class Agent
                 return Task.FromResult(_steeringQueue.Drain());
             },
             GetFollowUpMessages = () => Task.FromResult(_followUpQueue.Drain()),
+        };
+    }
+
+    /// <summary>
+    /// 把门面层 prepareNextTurn（只收 signal）包装成 S7 loop 层委托（只收 AgentTurnContext）：
+    /// 闭包在执行时经 <see cref="Signal"/> 取当前运行的取消令牌——loop 层委托不携带 signal，
+    /// 由包装层闭合这一缝隙。无任何回调注册时返回 null（loop 层按缺省跳过）。
+    /// </summary>
+    private PrepareNextTurn? CreateLoopPrepareNextTurn()
+    {
+        if (PrepareNextTurnWithContext is null && PrepareNextTurn is null)
+        {
+            return null;
+        }
+
+        return async turn =>
+        {
+            var signal = Signal ?? CancellationToken.None;
+            if (PrepareNextTurnWithContext is not null)
+            {
+                return await PrepareNextTurnWithContext(
+                    new PrepareNextTurnContext(
+                        turn.Message,
+                        turn.ToolResults,
+                        turn.Context,
+                        turn.NewMessages),
+                    signal).ConfigureAwait(false);
+            }
+
+            return await PrepareNextTurn!(signal).ConfigureAwait(false);
         };
     }
 
