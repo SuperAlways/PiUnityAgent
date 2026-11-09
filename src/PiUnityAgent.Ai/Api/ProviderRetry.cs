@@ -6,7 +6,7 @@ using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Ai.Api;
 
-// TODO(S8, D17): 上层助手轮次重试模块（pi utils/retry.ts）未移植；本文件只做请求级重试。
+// 上层助手轮次重试模块（pi utils/retry.ts）在 Utils/Retry.cs（S8/D17）；本文件只做请求级重试。
 /// <summary>pi <c>ProviderRetryOptions</c> 的 C# 形状。</summary>
 internal sealed class ProviderRetryOptions
 {
