@@ -110,7 +110,18 @@ public sealed partial class Agent
         {
             cancellation = _activeRun?.Cancellation;
         }
-        cancellation?.Cancel();
+        if (cancellation is null)
+        {
+            return;
+        }
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 完成竞态：快照与 Cancel 之间运行恰好收场，FinishRun 已销毁 CTS——已无可中止。
+        }
     }
 
     /// <summary>等待当前运行与全部事件监听器结束（agent_end listener 结算后才完成）。</summary>
