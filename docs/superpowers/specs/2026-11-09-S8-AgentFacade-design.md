@@ -1,6 +1,6 @@
 # S8 Agent 门面设计 spec（2026-11-09）
 
-> **状态**：实现完成（`feature/s8-agent-facade`）。独立审计 **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important）→ 修复/补登记 → 复核 PASS_WITH_REGISTERED_DEVIATIONS**：U-1/U-8 已代码对齐，U-2~U-8/N-1~N-6 已补 §6 登记。实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)。
+> **状态**：实现完成，已合 main（`2caa252`）。独立审计 **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important）→ 修复/补登记 → 复核 PASS_WITH_REGISTERED_DEVIATIONS**：U-1/U-8 已代码对齐，U-2~U-8/N-1~N-6 已补 §6 登记。实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)。
 > **范围**：S8 = `Agent` 有状态门面：持有 transcript、发出生命周期事件、双队列（steer/followUp + `QueueMode`）、abort、状态订阅与运行生命周期；同时承接台账 **D3**（Deferred stream/fetch/cancel）、**D17**（助手轮次重试公共模块）、**D23**（QueueMode）。不做 `proxy.ts`（D22）、图片/分类（D4/D5）、S9 上下文组装、S10 会话树。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实，S8 不引用）。
 > **上位规则**：[`docs/03-开发方法-拆解学习与移植约定.md`](../../03-开发方法-拆解学习与移植约定.md) §1.3；[`docs/05-教学阶段路线.md`](../../05-教学阶段路线.md) §S8；[`docs/SOP/阶段偏离审查-SOP-2026-11-08.md`](../../SOP/阶段偏离审查-SOP-2026-11-08.md)。
