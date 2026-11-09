@@ -109,7 +109,9 @@ public static class Retry
         var safe = double.IsInfinity(computed) || computed > int.MaxValue
             ? int.MaxValue
             : (int)Math.Round(computed);
-        var cap = maxAgentDelayMs ?? DefaultMaxAgentRetryDelayMs;
+        // JS setTimeout 对负延迟自动钳 0；.NET Task.Delay(< -1) 抛异常、-1 是无限等待，
+        // 所以负 cap 必须钳成 0，不能透传。
+        var cap = Math.Max(0, maxAgentDelayMs ?? DefaultMaxAgentRetryDelayMs);
         return Math.Min(safe, cap);
     }
 

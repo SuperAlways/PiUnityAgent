@@ -61,6 +61,15 @@ public class RetryTests
     }
 
     [Fact]
+    public void Negative_Cap_Clamps_To_Zero()
+    {
+        // JS setTimeout 对负延迟自动钳 0；.NET Task.Delay(< -1) 抛 ArgumentOutOfRange，
+        // 恰好 -1 表示无限等待。负 cap 必须钳成 0，绝不能透传给 Task.Delay。
+        Assert.Equal(0, Retry.RetryDelayMs(1_000, -5_000, 1));
+        Assert.Equal(0, Retry.RetryDelayMs(1_000, -1, 1));
+    }
+
+    [Fact]
     public async Task RetryAssistantCall_Returns_Success_And_Emits_Callbacks_In_Order()
     {
         var calls = new List<string>();
