@@ -37,5 +37,16 @@ internal sealed class ToolCallArguments
     /// 之前的 partial 消息快照保持不变。
     /// </summary>
     private static JsonObject ToObject(IReadOnlyDictionary<string, object?> partial)
-        => JsonSerializer.SerializeToNode(partial) as JsonObject ?? new JsonObject();
+    {
+        try
+        {
+            return JsonSerializer.SerializeToNode(partial) as JsonObject ?? new JsonObject();
+        }
+        catch (ArgumentException)
+        {
+            // pi 在快照里保留 Infinity；我们无法把非 JSON 数值放进块，退化为「暂无参数」，
+            // 终点 Finish 仍按原始文本给出 argumentsError，不炸流。
+            return new JsonObject();
+        }
+    }
 }

@@ -72,6 +72,15 @@ public class ToolCallArgumentsTests
     }
 
     [Fact]
+    public void Append_NonFinite_Number_Does_Not_Throw()
+    {
+        // 解析器把 1e400 读成 double.PositiveInfinity；快照序列化不得炸流（pi 快照里保留 Infinity）。
+        var arguments = new ToolCallArguments();
+        var partial = arguments.Append("{\"x\":1e400}");
+        Assert.Empty(partial);
+    }
+
+    [Fact]
     public void ToolCallArguments_Finish_Repairs_Recoverable_Json()
     {
         var arguments = new ToolCallArguments();
