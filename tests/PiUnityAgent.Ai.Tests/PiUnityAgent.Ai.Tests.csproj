@@ -22,4 +22,8 @@
     <ProjectReference Include="..\..\src\PiUnityAgent.Ai\PiUnityAgent.Ai.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\schema-validation-corpus.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
