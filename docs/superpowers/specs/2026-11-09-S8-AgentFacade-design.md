@@ -1,6 +1,6 @@
 # S8 Agent 门面设计 spec（2026-11-09）
 
-> **状态**：v1 设计完成（2026-11-09，待用户 review；未实现）。
+> **状态**：v1 设计完成（2026-11-09）；实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)；未实现。
 > **范围**：S8 = `Agent` 有状态门面：持有 transcript、发出生命周期事件、双队列（steer/followUp + `QueueMode`）、abort、状态订阅与运行生命周期；同时承接台账 **D3**（Deferred stream/fetch/cancel）、**D17**（助手轮次重试公共模块）、**D23**（QueueMode）。不做 `proxy.ts`（D22）、图片/分类（D4/D5）、S9 上下文组装、S10 会话树。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实，S8 不引用）。
 > **上位规则**：[`docs/03-开发方法-拆解学习与移植约定.md`](../../03-开发方法-拆解学习与移植约定.md) §1.3；[`docs/05-教学阶段路线.md`](../../05-教学阶段路线.md) §S8；[`docs/SOP/阶段偏离审查-SOP-2026-11-08.md`](../../SOP/阶段偏离审查-SOP-2026-11-08.md)。
@@ -194,7 +194,10 @@ public sealed record AgentOptions
     public AfterToolCall? AfterToolCall { get; init; }
     public FinishTurn? FinishTurn { get; init; }
     public PrepareRequest? PrepareRequest { get; init; }
-    public PrepareNextTurn? PrepareNextTurn { get; init; }
+
+    /// <summary>pi AgentOptions.prepareNextTurn：门面层只收 signal（与 S7 loop 层只收 context 的同名回调不同）。</summary>
+    public Func<CancellationToken, Task<AgentLoopTurnUpdate?>>? PrepareNextTurn { get; init; }
+
     public PrepareNextTurnWithContext? PrepareNextTurnWithContext { get; init; }
 
     public QueueMode SteeringMode { get; init; } = QueueMode.OneAtATime;
@@ -215,7 +218,7 @@ public sealed record AgentOptions
 
 - 除 `InitialState` 外，其余字段与 pi `AgentOptions` 一一对应；`onPayload/onResponse/onProviderStreamEvent` 采用 S3 `StreamOptions` 的 delegate 形状。
 - `StreamFn` 可空：省略时回退 `DefaultStreamFn.Get()`（pi 构造器的运行期兜底；见 §6）。
-- `PrepareNextTurn` 保持 S7 的 loop 形状（只带 context）；`PrepareNextTurnWithContext` 是门面新增入口（pi `AgentOptions.prepareNextTurnWithContext`），Agent 用闭包捕获当前 run 的 CancellationToken。
+- **两层同名回调不同签名**：`AgentOptions.PrepareNextTurn` 是门面层（只收 signal，pi agent.ts:128-130）；S7 `AgentLoopConfig.PrepareNextTurn`（`PrepareNextTurn(AgentTurnContext)`）保持不变。`PrepareNextTurnWithContext` 是门面新增入口（pi `AgentOptions.prepareNextTurnWithContext`，context+signal）；Agent 的 loop 级 wrapper 按 pi 归一，并用闭包捕获当前 run 的 CancellationToken。
 - `Transport` 省略=Auto；Agent 门面的公开字段默认 `TransportKind.Auto`（pi `"auto"`）。
 
 ### 3.4 Agent 门面
@@ -240,7 +243,7 @@ public sealed class Agent
     public AfterToolCall? AfterToolCall { get; set; }
     public FinishTurn? FinishTurn { get; set; }
     public PrepareRequest? PrepareRequest { get; set; }
-    public PrepareNextTurn? PrepareNextTurn { get; set; }
+    public Func<CancellationToken, Task<AgentLoopTurnUpdate?>>? PrepareNextTurn { get; set; }
     public PrepareNextTurnWithContext? PrepareNextTurnWithContext { get; set; }
     public string? SessionId { get; set; }
     public ThinkingBudgets? ThinkingBudgets { get; set; }
@@ -655,6 +658,7 @@ public static class Retry
 | `AgentOptions.streamFn` | 类型必填；构造器运行期可省略→`getDefaultStreamFn()` | `required StreamFn` | 可空 + `DefaultStreamFn.Get()` 兜底 | D/B | 行为对齐 pi 兜底，编译期比 TS 宽松；代价=误配延迟到构造/运行时 |
 | `AgentOptions.prepareNextTurnWithContext` | 有（context+signal） | 无 | 有独立 delegate + `PrepareNextTurnContext` | B | 补 pi 公共形状；`PrepareNextTurnContext extends AgentTurnContext` 为空扩展，C# 用同字段 record |
 | `AgentLoopConfig.prepareNextTurn` | loop 层只带 context（agent-loop.ts:195） | 同（无 signal） | S7 保持 `PrepareNextTurn(AgentTurnContext)` 不变；门面闭包捕获 signal | B | 不回改 S7 签名；与 pi 原版 loop 调用一致 |
+| `AgentOptions.prepareNextTurn` | 门面层只收 signal，无 context（agent.ts:128-130） | 无 | `Func<CancellationToken, Task<AgentLoopTurnUpdate?>>?` | B/D | 与 S7 loop 层同名回调签名不同；Agent 的 loop wrapper 按 pi 归一（context 供 WithContext 变体） |
 | `QueueMode` | `"all" \| "one-at-a-time"` 字符串联合 | 无 | `QueueMode` enum（All/OneAtATime） | A | C# 枚举；wire 无 |
 | 待处理队列 | `PendingMessageQueue`（未导出） | 同（public class） | internal class | B | pi 未导出；仅 Agent 内部使用 |
 | `AgentState.messages/tools` getter | 返回内部数组（可原地 push） | `IReadOnlyList` | 只读快照；setter 复制 | B/D | 防止外部改内部 transcript；代价=非 live 引用 |
