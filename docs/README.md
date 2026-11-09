@@ -1,7 +1,7 @@
 # docs · 索引
 
 > **状态约定**：✅ 已完成/已合 main · 🟡 待 review/待执行 · ⬜ 未开始 · 🗄 历史归档
-> **最后同步**：2026-11-09（S3 v3 已合 main；S4 实现完成并通过独立审计；**S5 实现完成并通过独立审计 PASS_WITH_REGISTERED_DEVIATIONS**——两协议/7 家 profile/D1/D6/D7/D10 承接完毕、federation 拆 D15；S4/S5 范围收敛为 4 协议族 + 首批 provider profile；UnityLlmTransport Phase 0–6 完成，锁 `4c0cc4b`/`0.6.0`）
+> **最后同步**：2026-11-09（**S6 工具契约实现完成并通过独立审计+新审计者复核**（AgentTool/JSON Schema 校验/D21）；S4/S5 已合 main；S1–S5 偏离修复已合 main；UnityLlmTransport Phase 0–6 完成，锁 `4c0cc4b`/`0.6.0`）
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
@@ -28,10 +28,12 @@
 | [superpowers/plans/2026-11-07-S3-对齐返工-v2.md](superpowers/plans/2026-11-07-S3-对齐返工-v2.md) | S3 返工 v2 实现计划（Fetch/Model/Options/Auth/LazyStream/Models/Faux + 文档门禁） | ✅ 已执行 |
 | [superpowers/specs/2026-11-08-S3-v3-偏离补齐-design.md](superpowers/specs/2026-11-08-S3-v3-偏离补齐-design.md) | S3 v3.1 偏离补齐 spec：Auth 全套形状、Auth 解析顺序/锁语义、ModelsError/ProviderFactory/FilterAll、ClientIdentity、LazyStreamObserver、ModelsStore、Options 严格化（§6 表已逐行对齐代码） | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（待用户验收合 main） |
 | [superpowers/plans/2026-11-08-S3-v3-偏离补齐.md](superpowers/plans/2026-11-08-S3-v3-偏离补齐.md) | S3 v3.1 实现计划（Auth/ProviderFactory/Models/Options/Faux/ClientIdentity + 最终独立审计） | ✅ 已执行（Task 9 审计/复核完成；D14 转 S4） |
-| [superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md](superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md) | S4 OpenAI 家族（completions + responses）协议适配 spec：首批 8 家 profile、MockFetch、Dn 承接、三方偏离表 | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（待用户验收合 main） |
-| [superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md](superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md) | S4 实施计划：UnityLlmTransport 源码 vendoring + Hosts.Net8 Fetch 适配器 + 两协议/8 家 profile/Dn/审计 | ✅ 已执行（审计完成；待用户验收合 main） |
-| [superpowers/specs/2026-11-08-S5-Anthropic与Google协议适配-design.md](superpowers/specs/2026-11-08-S5-Anthropic与Google协议适配-design.md) | S5 Anthropic/Google（anthropic-messages + google-generative-ai）协议适配 spec：7 家 profile、MockFetch、D1/D6/D7/D10 承接、三方偏离表 | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（待用户验收合 main） |
-| [superpowers/plans/2026-11-08-S5-Anthropic与Google协议适配.md](superpowers/plans/2026-11-08-S5-Anthropic与Google协议适配.md) | S5 实施计划：两协议适配器 + 7 家 profile/D1 OAuth/D7 store/D6/D10/文档/审计（10 任务） | ✅ 已执行（审计完成；待用户验收合 main） |
+| [superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md](superpowers/specs/2026-11-08-S4-OpenAI家族协议适配-design.md) | S4 OpenAI 家族（completions + responses）协议适配 spec：首批 8 家 profile、MockFetch、Dn 承接、三方偏离表 | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（已合 main） |
+| [superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md](superpowers/plans/2026-11-08-S4-OpenAI家族协议适配.md) | S4 实施计划：UnityLlmTransport 源码 vendoring + Hosts.Net8 Fetch 适配器 + 两协议/8 家 profile/Dn/审计 | ✅ 已执行（已合 main） |
+| [superpowers/specs/2026-11-08-S5-Anthropic与Google协议适配-design.md](superpowers/specs/2026-11-08-S5-Anthropic与Google协议适配-design.md) | S5 Anthropic/Google（anthropic-messages + google-generative-ai）协议适配 spec：7 家 profile、MockFetch、D1/D6/D7/D10 承接、三方偏离表 | ✅ 已实现 + 独立审计 PASS_WITH_REGISTERED_DEVIATIONS（已合 main） |
+| [superpowers/plans/2026-11-08-S5-Anthropic与Google协议适配.md](superpowers/plans/2026-11-08-S5-Anthropic与Google协议适配.md) | S5 实施计划：两协议适配器 + 7 家 profile/D1 OAuth/D7 store/D6/D10/文档/审计（10 任务） | ✅ 已执行（已合 main） |
+| [superpowers/specs/2026-11-09-S6-工具契约与注册-design.md](superpowers/specs/2026-11-09-S6-工具契约与注册-design.md) | S6 工具契约与注册 spec：AgentTool/AgentToolResult、pi-schema 校验移植、D21 登记、三方偏离表 | ✅ 已实现 + 独立审计及复核 PASS_WITH_REGISTERED_DEVIATIONS |
+| [superpowers/plans/2026-11-09-S6-工具契约与注册.md](superpowers/plans/2026-11-09-S6-工具契约与注册.md) | S6 实施计划：Schema 引擎移植 + ToolValidation + Core 契约 + D21 + 审计 | ✅ 已执行 |
 | [learning/](learning/README.md) | 教学与心智模型：导读、Q&A、逐阶段教学篇 | 骨架 |
 | [learning/REFERENCES.md](learning/REFERENCES.md) | pi 教学项目逐章参考索引（按 S0–S13） | v1 |
 | [archive/2026-11-06-Unity流式HTTP与SSE-调研问题](archive/2026-11-06-Unity流式HTTP与SSE-调研问题.md) | 通讯组件立项前的调研问题（历史） | 🗄 已被 UnityLlmTransport docs 取代 |
