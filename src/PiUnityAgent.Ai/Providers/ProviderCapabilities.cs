@@ -22,9 +22,15 @@ public interface IFilterableProvider
         Credential? credential);
 }
 
-/// <summary>Deferred 响应能力；行为后置 S8/D3，形状先存在。</summary>
+/// <summary>Deferred 响应能力；行为在 S8/D3 落地。</summary>
 public interface IDeferredProvider
 {
+    /// <summary>任一 api 实现导出 fetchDeferred 时为 true；pi 以方法存在性表达。</summary>
+    bool SupportsFetchDeferred { get; }
+
+    /// <summary>任一 api 实现导出 cancelDeferred 时为 true。</summary>
+    bool SupportsCancelDeferred { get; }
+
     IAssistantMessageEventStream StreamDeferred(
         Model model,
         DeferredHandle handle,

@@ -36,7 +36,7 @@ public static class ProviderFactory
             : new CreatedProvider(options, options.Api, options.ApiByApi);
     }
 
-    private class CreatedProvider : IProvider, IFilterableProvider, IImagesProvider, IClassifierProvider
+    private class CreatedProvider : IProvider, IFilterableProvider, IImagesProvider, IClassifierProvider, IDeferredProvider
     {
         private readonly CreateProviderOptions _options;
         private readonly ProviderStreams? _single;
@@ -80,6 +80,55 @@ public static class ProviderFactory
         {
             var streams = ApiFor(model);
             return streams is null ? MissingApi(model) : streams.StreamSimple(model, context, options);
+        }
+
+        public bool SupportsFetchDeferred => _single?.FetchDeferred is not null
+            || (_byApi?.Values.Any(streams => streams.FetchDeferred is not null) ?? false);
+
+        public bool SupportsCancelDeferred => _single?.CancelDeferred is not null
+            || (_byApi?.Values.Any(streams => streams.CancelDeferred is not null) ?? false);
+
+        public IAssistantMessageEventStream StreamDeferred(
+            Model model,
+            DeferredHandle handle,
+            DeferredFetchOptions? options)
+        {
+            var streams = ApiFor(model);
+            if (streams?.FetchDeferred is null)
+            {
+                throw new ModelsError(
+                    ModelsErrorCode.Provider,
+                    $"Provider {_options.Id} does not support deferred responses");
+            }
+
+            return streams.FetchDeferred(model, handle, options);
+        }
+
+        public Task<AssistantMessage> FetchDeferredAsync(
+            Model model,
+            DeferredHandle handle,
+            DeferredFetchOptions? options)
+            => StreamDeferred(model, handle, options)
+                .WaitForDoneAsync(options?.CancellationToken ?? default);
+
+        public Task CancelDeferredAsync(
+            Model model,
+            DeferredHandle handle,
+            DeferredCancelOptions? options)
+        {
+            var streams = ApiFor(model);
+            if (streams?.CancelDeferred is null)
+            {
+                throw new ModelsError(
+                    ModelsErrorCode.Provider,
+                    $"Provider {_options.Id} does not support deferred responses");
+            }
+
+            return streams.CancelDeferred(
+                model,
+                handle,
+                options,
+                options?.CancellationToken ?? default);
         }
 
         private ProviderStreams? ApiFor(Model model) => _single ?? _byApi?.GetValueOrDefault(model.Api);

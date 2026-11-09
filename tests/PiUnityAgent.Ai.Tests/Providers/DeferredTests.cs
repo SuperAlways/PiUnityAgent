@@ -1,0 +1,123 @@
+using System.Text.Json.Nodes;
+using PiUnityAgent.Ai.Events;
+using PiUnityAgent.Ai.Providers;
+using PiUnityAgent.Ai.Types;
+
+namespace PiUnityAgent.Ai.Tests.Providers;
+
+public class DeferredProviderCapabilityTests
+{
+    private static Model Model()
+        => ProviderTestSupport.CreateModel("m1", "p1");
+
+    private static IAssistantMessageEventStream Done(Model model, StopReason reason, DeferredHandle? handle = null)
+    {
+        var stream = new AssistantMessageEventStream();
+        var message = new AssistantMessage
+        {
+            Content = Array.Empty<ContentBlock>(),
+            Api = model.Api,
+            Provider = model.Provider,
+            Model = model.Id,
+            Usage = new Usage(),
+            StopReason = reason,
+            Deferred = handle,
+            Timestamp = 1,
+        };
+        stream.Push(new AssistantMessageEvent.Done(reason, message));
+        stream.End(message);
+        return stream;
+    }
+
+    private static DeferredHandle Handle(string id = "d1") => new()
+    {
+        Provider = "p1",
+        ModelId = "m1",
+        Api = "faux",
+        Id = id,
+    };
+
+    [Fact]
+    public void StaticProvider_Reports_Capability_From_Delegates_And_Throws_When_Missing()
+    {
+        var model = Model();
+        var without = ProviderTestSupport.CreateProvider("p1");
+        Assert.False(Assert.IsAssignableFrom<IDeferredProvider>(without).SupportsFetchDeferred);
+        Assert.False(Assert.IsAssignableFrom<IDeferredProvider>(without).SupportsCancelDeferred);
+
+        var with = new StaticProvider(
+            "p1", "p1", new[] { model }, ProviderTestSupport.DoneStream,
+            ProviderTestSupport.KeylessAuth(),
+            fetchDeferred: (requestModel, handle, options) => Done(requestModel, StopReason.Deferred, handle),
+            cancelDeferred: (requestModel, handle, options, signal) => Task.CompletedTask);
+
+        var deferred = Assert.IsAssignableFrom<IDeferredProvider>(with);
+        Assert.True(deferred.SupportsFetchDeferred);
+        Assert.True(deferred.SupportsCancelDeferred);
+        var message = Assert.IsType<AssistantMessage>(deferred.StreamDeferred(model, Handle(), null)
+            .WaitForDoneAsync().Result);
+        Assert.Equal(StopReason.Deferred, message.StopReason);
+        Assert.Equal("d1", message.Deferred!.Id);
+    }
+
+    [Fact]
+    public void FactoryProvider_Exposes_Deferred_From_Api_Streams()
+    {
+        var model = Model();
+        var capturedHandle = Handle("d2");
+        var options = new CreateProviderOptions
+        {
+            Id = "p1",
+            Auth = ProviderTestSupport.KeylessAuth(),
+            Models = new ProviderModel[] { model },
+            Api = new ProviderStreams
+            {
+                Stream = ProviderTestSupport.DoneStream,
+                StreamSimple = (requestModel, context, streamOptions) =>
+                    ProviderTestSupport.DoneStream(requestModel, context, streamOptions),
+                FetchDeferred = (requestModel, handle, fetchOptions) =>
+                    Done(requestModel, StopReason.Deferred, handle),
+                CancelDeferred = (requestModel, handle, cancelOptions, signal) =>
+                {
+                    capturedHandle = handle;
+                    return Task.CompletedTask;
+                },
+            },
+        };
+
+        var provider = ProviderFactory.Create(options);
+        var deferred = Assert.IsAssignableFrom<IDeferredProvider>(provider);
+        Assert.True(deferred.SupportsFetchDeferred);
+        Assert.True(deferred.SupportsCancelDeferred);
+
+        var message = Assert.IsType<AssistantMessage>(deferred.StreamDeferred(model, Handle("d2"), null)
+            .WaitForDoneAsync().Result);
+        Assert.Equal(StopReason.Deferred, message.StopReason);
+
+        deferred.CancelDeferredAsync(model, Handle("d3"), null).GetAwaiter().GetResult();
+        Assert.Equal("d3", capturedHandle.Id);
+    }
+
+    [Fact]
+    public async Task FactoryProvider_Without_Deferred_Reports_Unsupported()
+    {
+        var provider = ProviderFactory.Create(new CreateProviderOptions
+        {
+            Id = "p1",
+            Auth = ProviderTestSupport.KeylessAuth(),
+            Models = new ProviderModel[] { Model() },
+            Api = new ProviderStreams
+            {
+                Stream = ProviderTestSupport.DoneStream,
+                StreamSimple = (requestModel, context, streamOptions) =>
+                    ProviderTestSupport.DoneStream(requestModel, context, streamOptions),
+            },
+        });
+
+        var deferred = Assert.IsAssignableFrom<IDeferredProvider>(provider);
+        Assert.False(deferred.SupportsFetchDeferred);
+        Assert.False(deferred.SupportsCancelDeferred);
+        Assert.Throws<ModelsError>(() => deferred.StreamDeferred(Model(), Handle(), null));
+        await Assert.ThrowsAsync<ModelsError>(() => deferred.CancelDeferredAsync(Model(), Handle(), null));
+    }
+}
