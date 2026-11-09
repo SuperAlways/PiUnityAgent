@@ -1,6 +1,6 @@
 # S8 Agent 门面设计 spec（2026-11-09）
 
-> **状态**：v1 设计完成（2026-11-09）；实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)；未实现。
+> **状态**：实现完成（`feature/s8-agent-facade`，HEAD `c8ce5aa`）。独立审计 **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important）**：U-1/U-8 已代码对齐，U-2~U-8/N-1~N-6 已补 §6 登记；待新独立审计者复核。实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)。
 > **范围**：S8 = `Agent` 有状态门面：持有 transcript、发出生命周期事件、双队列（steer/followUp + `QueueMode`）、abort、状态订阅与运行生命周期；同时承接台账 **D3**（Deferred stream/fetch/cancel）、**D17**（助手轮次重试公共模块）、**D23**（QueueMode）。不做 `proxy.ts`（D22）、图片/分类（D4/D5）、S9 上下文组装、S10 会话树。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实，S8 不引用）。
 > **上位规则**：[`docs/03-开发方法-拆解学习与移植约定.md`](../../03-开发方法-拆解学习与移植约定.md) §1.3；[`docs/05-教学阶段路线.md`](../../05-教学阶段路线.md) §S8；[`docs/SOP/阶段偏离审查-SOP-2026-11-08.md`](../../SOP/阶段偏离审查-SOP-2026-11-08.md)。
@@ -497,7 +497,7 @@ public static class Retry
   3. provider 不是 `IDeferredProvider` 或 `SupportsFetchDeferred == false` → `ModelsError(Provider, $"Provider {model.Provider} does not support deferred responses")`（**在 auth 之前**，pi 顺序）；
   4. `ResolveAuthForStreamAsync(model, options)` → `requestModel`（auth.BaseUrl 覆盖）→ `ApplyAuthOptions/ApplyIdentity/ApplyTransformHeaders`（保留 `DeferredFetchOptions.Wait`）→ provider.StreamDeferred。
 - `FetchDeferredAsync` = `StreamDeferred(...).WaitForDoneAsync(options?.CancellationToken ?? default)`（pi `.result()`）。
-- `CancelDeferredAsync`：provider 存在 + `SupportsCancelDeferred` → auth → `provider.CancelDeferredAsync(requestModel, handle, applied)`（取消令牌从 `options.CancellationToken` 读取）；不支持 → `ModelsError(Provider, ...)`。
+- `CancelDeferredAsync`：provider 存在 + `SupportsCancelDeferred` → auth → `provider.CancelDeferredAsync(requestModel, handle, applied)`；**cancel 为 best-effort，不读取消令牌、不抛出**（pi faux 同；审计 U-1 已代码对齐）；不支持 → `ModelsError(Provider, ...)`。
 - 不支持的 deferred 不再抛 `NotSupportedException`；`ModelsCapabilityTests.Deferred_Methods_Are_Deferred_To_S8` 现势钉删除，改为行为测试。
 
 #### 4.7.2 ProviderFactory / StaticProvider 分派
@@ -541,7 +541,7 @@ public static class Retry
   1. 把 handle 的克隆（Data 深拷贝）追加到 `state.CancelledDeferred`；
   2. 若 entry 存在 → `cancelled = true`；
   3. `cancelOptions.OnResponse` 非空 → `await OnResponse(200, 空头)`；
-  4. 不抛出；令牌从 `cancelOptions.CancellationToken` 读取。
+  4. **best-effort：不读取消令牌、不抛出**（pi faux 语义；审计 U-1）。
 - `state.CancelledDeferred` 与 entry map 由同一把锁保护；读取方在操作完成后观察。
 
 ### 4.8 D17 助手轮次重试
@@ -552,7 +552,7 @@ public static class Retry
    - `StopReason != Error` 或 `string.IsNullOrEmpty(ErrorMessage)` → false；
    - 先匹配 **不可重试** 正则（配额/计费/订阅限制：`GoUsageLimitError`、`FreeUsageLimitError`、`Monthly usage limit reached`、`available balance`、`insufficient_quota`、`out of budget`、`quota exceeded`、`billing`、`subscription_sharing_usage_limit_exceeded`、`subscription_sharing_workplace_individual_usage_limit_exceeded`、Z.ai 1308、`subscription_sharing_usage_unavailable`、`subscription_sharing_user_unavailable`）；命中 → false；
    - 再匹配 **可重试** 正则（过载/限流/5xx/网络/流中断/WebSocket/上游转发等，逐字照搬 pi `retry.ts:37-125`）；命中 → true；否则 false。
-   - 两组正则用 `RegexOptions.IgnoreCase`；不可重试优先。
+   - 两组正则用 `RegexOptions.IgnoreCase | CultureInvariant`；不可重试优先。
 2. `RetryDelayMs(baseDelayMs, maxAgentDelayMs, attempt)`：
    - `base * 2^(attempt-1)`（attempt<=1 视为 1）；`maxAgentDelayMs ?? 60_000` 封顶；溢出按 long 计算后钳制，不产生负值。
 3. `RetryAssistantCall(produce, policy, signal, callbacks)`：
@@ -676,9 +676,18 @@ public static class Retry
 | `AgentState.thinkingLevel` | `ThinkingLevel`（含 off） | `ThinkingLevel` | `ModelThinkingLevel`（含 Off） | A/B | S7 已登记；config 流选项用 `ThinkingLevel?`，turn/update 用 `ModelThinkingLevel` |
 | transcript 重放子集 | `createInitialSystemMessage/getCurrentSystemMessage/getCurrentSystemPrompt` 公开（pi-ai） | `Transcript` 公开 | Core internal `AgentTranscript`；D11/S9 公开 | C/D | 保持 S7“不提前扩 Ai 公共面”的边界；代价=S9 需提升/迁移；D11 目标不变 |
 | 线程安全 | pi 单线程假设 | 无锁 | `_gate` 保护同步状态/队列/activeRun；listener 在后台线程 | D | Unity 主线程 steer/abort 与循环续体跨线程；代价=少量锁开销 |
+| `Continue` 排空竞态恢复 | pi 单线程、排空即跑，无竞态路径 | 无 | 排空后启动被并发 run 拒绝时 `PendingMessageQueue.Prepend` 插回队首，并抛 Continue 专属文案 | D | 审计 U-5；收益=并发 Continue 不丢消息；代价=新增 internal API 与文案替换路径 |
+| `Abort` 吞 `ObjectDisposedException` | `AbortController.abort()` 可重复、无销毁概念 | CT.Cancel | 快照后取消；CTS 已 Dispose 则吞 ODE | D | 审计 U-6；FinishRun 与 Abort 的完成竞态；代价=吞掉“已无 run”这一无害信号 |
+| listener 快照迭代 | Set 活迭代（派发中新订阅者可在当次被访问） | 无锁 | 锁内 `_listeners.ToArray()` 后迭代 | A/D | 审计 U-7；C# 活迭代遇并发修改会抛，快照是必要选择；代价=新订阅者下一事件才收到 |
+| null 守卫 | pi 对 null 无检查 | 无 | `AgentState.Tools/Messages`、`Enqueue(null)` 抛 `ArgumentNullException` | B/D | 审计 N-1；C# 惯用加固，极次要 |
+| `DefaultStreamFn.IsConfigured` | pi 无此成员 | 同? | 增量只读属性 | B | 审计 N-6；纯增量，方便宿主判断是否已注入 |
+| LazyStream observer | deferred 流也传 `observeModelRequest`（models.ts:963） | 同 | `Models.StreamDeferred` 不传 observer（与 stream/streamSimple 一致） | C/D8 | 审计 N-5；遥测后置 D8 的既有边界，台账在案 |
 | D3 provider 能力 | 可选方法存在性（`provider.fetchDeferred`） | `SupportsFetchDeferred/SupportsCancelDeferred` | 接口 + 两个布尔属性 | B | C# 无法用方法存在性表达；工厂/静态 provider 均实现 |
 | D3 工厂分派 | createProvider 有任一 api 的 fetchDeferred 才导出 | CreateProvider 支持 Flags | CreatedProvider 实现 `IDeferredProvider` + Supports* | B | 与 pi 能力面等价；缺失时同文案 ModelsError |
-| D3 不支持文案 | `Provider X does not support deferred responses` | 同 | 同（`ModelsError(Provider)`） | B | 逐字；错误类型 C# 化 |
+| D3 不支持文案（Models 层） | `Provider X does not support deferred responses`（models.ts:961/984） | 同 | 同（`ModelsError(Provider)`） | B | Models 层逐字；错误类型 C# 化 |
+| D3 不支持文案（provider 层） | 工厂层 fetch=`Provider X does not support deferred responses for "<api>"`；cancel=`Provider X cannot cancel deferred responses for "<api>"`（models.ts:1167-1185） | 同? | 两处统一 `Provider <id> does not support deferred responses` | B | 经 Models 消费文案逐字；直调 provider 时不带 `for "<api>"` / 不用 `cannot cancel`；审计 U-3 登记 |
+| D3 provider 直调错误面 | 工厂 `fetchDeferred` 包 lazyStream，直调 provider 返回流、缺实现为终态 Error | 同 | `CreatedProvider`/`StaticProvider` 直调时同步抛 `ModelsError`；经 `Models.StreamDeferred` 消费等价为终态 Error | B | 审计 U-4 登记；代价=绕过 Models 直调 provider 的调用方需 catch |
+| D3 Faux 错误终态标识/时间戳 | 错误消息用 provider 级 api/provider + `requestModel.id` + `Date.now()`（faux.ts:322-336,678-681） | 同 | 复用既有 `EmitError`：请求 model + `Timestamp=0` | D/B | 非默认 Api/Provider 的 Faux 实例可见差异；默认配置下值相同；审计 U-2 登记 |
 | D3 Faux handle id | `Date.now()` + `Math.random()` | 同? | `deferred:{n}` provider 单调计数 | D | 测试确定性（S7 Faux 同纪律）；代价=id 不含时间 |
 | D3 fetch/cancel onResponse | 200 + 空头 | 同 | 同 | B | ProviderResponse 形状已有 |
 | D3 fetch 缓存 | entry.final 缓存一次 | 同 | 同 | B | 与 pi 一致 |
@@ -687,7 +696,9 @@ public static class Retry
 | D17 重试模块 | `retry.ts` 公共工具；agent-core 不消费 | `Retry.cs` | `Ai/Utils/Retry.cs`；不接 Agent | B/scope | 与 pi 一致；调用方 2A |
 | D17 回调 | `void \| Promise<void>` | Task | Task | A/B | C# async 面 |
 | D17 退避取消 | AbortSignal + setTimeout | Task.Delay(token) | `Task.Delay(delay, token)` | A | C# 取消模型；归一化 aborted 消息 |
-| D17 正则 | 两组正则（retry.ts:7-125） | 同 | 逐字移植 + IgnoreCase | B | 分类语义一致；代价=正则引擎差异（.NET 与 V8 对个别字符类可能不同，验收用行为语料） |
+| D17 正则 | 两组正则（retry.ts:7-125） | 同 | 逐字移植 + `IgnoreCase` + `CultureInvariant` | B | 分类语义一致；`CultureInvariant` 为确定性加固（审计 N-3）；代价=正则引擎差异（.NET 与 V8 对个别字符类可能不同，验收用行为语料） |
+| D17 负 delay 钳 0 | JS `setTimeout` 将负延迟钳 0 | 同 | `RetryDelayMs` 对负 base/cap 钳 0；否则 `Task.Delay` 抛/无限等待 | D | 审计 N-2；净行为等价（都不真睡）；代码注释与 D17 备注已记 |
+| provider 层 `FetchDeferredAsync` | provider 只有返回流的 `fetchDeferred`；`.result()` 便捷只在 Models | 同 | `IDeferredProvider.FetchDeferredAsync` 增量便捷方法 | B | 审计 N-4；纯增量，无形状损失 |
 | `proxy.ts` | 395 行服务端代理流 | `Proxy.cs` | 不做 | C/D22 | 后续扩展；S8 不引入 server RPC |
 | Deferred 真实 provider | 仅 faux 导出 fetchDeferred（v1.5.0） | faux 同 | 仅 Faux 验收 | scope | pi 同版本无真实 provider deferred；不虚构适配 |
 
