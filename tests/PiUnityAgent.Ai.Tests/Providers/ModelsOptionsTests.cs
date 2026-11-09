@@ -58,4 +58,88 @@ public class ModelsOptionsTests
         Assert.NotNull(seenIdentity!.UserAgent);   // 默认 UserAgent 保留
         Assert.Equal("request", seenIdentity.Version); // 请求级字段覆盖
     }
+
+    [Fact]
+    public async Task Stream_Injects_OpenCode_Session_Header_For_OpenCode_Target()
+    {
+        IReadOnlyDictionary<string, string?>? seenHeaders = null;
+        var models = new Models(new CreateModelsOptions());
+        models.SetProvider(ProviderTestSupport.CreateProvider(id: "opencode", stream: (model, context, options) =>
+        {
+            seenHeaders = options?.Headers;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(provider: "opencode"),
+            new Context { Messages = Array.Empty<Message>() },
+            new StreamOptions { SessionId = "conv-1" });
+        await stream.WaitForDoneAsync();
+
+        Assert.Equal("conv-1", seenHeaders!["x-opencode-session"]);
+    }
+
+    [Fact]
+    public async Task Stream_Explicit_OpenCode_Session_Header_Wins()
+    {
+        IReadOnlyDictionary<string, string?>? seenHeaders = null;
+        var models = new Models(new CreateModelsOptions());
+        models.SetProvider(ProviderTestSupport.CreateProvider(id: "opencode", stream: (model, context, options) =>
+        {
+            seenHeaders = options?.Headers;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(provider: "opencode"),
+            new Context { Messages = Array.Empty<Message>() },
+            new StreamOptions
+            {
+                SessionId = "conv-1",
+                Headers = new Dictionary<string, string?> { ["x-opencode-session"] = "configured" },
+            });
+        await stream.WaitForDoneAsync();
+
+        Assert.Equal("configured", seenHeaders!["x-opencode-session"]);
+    }
+
+    [Fact]
+    public async Task Stream_Does_Not_Inject_Session_Header_For_Other_Providers()
+    {
+        IReadOnlyDictionary<string, string?>? seenHeaders = null;
+        var models = new Models(new CreateModelsOptions());
+        models.SetProvider(ProviderTestSupport.CreateProvider(stream: (model, context, options) =>
+        {
+            seenHeaders = options?.Headers;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+
+        var stream = models.Stream(
+            ProviderTestSupport.CreateModel(),
+            new Context { Messages = Array.Empty<Message>() },
+            new StreamOptions { SessionId = "conv-1" });
+        await stream.WaitForDoneAsync();
+
+        Assert.True(seenHeaders is null || !seenHeaders.ContainsKey("x-opencode-session"));
+    }
+
+    [Fact]
+    public async Task StreamSimple_Injects_OpenCode_Session_Header()
+    {
+        IReadOnlyDictionary<string, string?>? seenHeaders = null;
+        var models = new Models(new CreateModelsOptions());
+        models.SetProvider(ProviderTestSupport.CreateProvider(id: "opencode", stream: (model, context, options) =>
+        {
+            seenHeaders = options?.Headers;
+            return ProviderTestSupport.DoneStream(model, context, options);
+        }));
+
+        var stream = models.StreamSimple(
+            ProviderTestSupport.CreateModel(provider: "opencode"),
+            new Context { Messages = Array.Empty<Message>() },
+            new SimpleStreamOptions { SessionId = "conv-2" });
+        await stream.WaitForDoneAsync();
+
+        Assert.Equal("conv-2", seenHeaders!["x-opencode-session"]);
+    }
 }

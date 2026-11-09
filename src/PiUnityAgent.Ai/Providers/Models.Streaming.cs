@@ -22,10 +22,10 @@ public sealed partial class Models
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
             var auth = await ResolveAuthForStreamAsync(model, options).ConfigureAwait(false);
-            var applied = ApplyAuthOptions(options, auth);
+            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
+            var applied = ApplyAuthOptions(requestModel, options, auth);
             applied = ApplyIdentity(applied);
             applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
-            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
             return provider.Stream(requestModel, transcript, applied with { TransformHeaders = null });
         });
     }
@@ -48,10 +48,10 @@ public sealed partial class Models
             var provider = RequireProvider(model.Provider);
             var ct = options?.CancellationToken ?? default;
             var auth = await ResolveAuthForStreamAsync(model, options).ConfigureAwait(false);
-            var applied = ApplyAuthOptions(options, auth);
+            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
+            var applied = ApplyAuthOptions(requestModel, options, auth);
             applied = ApplyIdentity(applied);
             applied = await ApplyTransformHeaders(applied, ct).ConfigureAwait(false);
-            var requestModel = auth.Auth.BaseUrl is null ? model : model with { BaseUrl = auth.Auth.BaseUrl };
             return provider.StreamSimple(requestModel, transcript, applied with { TransformHeaders = null });
         });
     }
@@ -85,10 +85,15 @@ public sealed partial class Models
         return auth;
     }
 
-    private static StreamOptions ApplyAuthOptions(StreamOptions? options, AuthResult auth)
+    private static StreamOptions ApplyAuthOptions(Model model, StreamOptions? options, AuthResult auth)
     {
         options ??= new StreamOptions();
-        var headers = MergeHeaders(auth.Auth.Headers, options.Headers);
+        var sessionHeaders = ClientIdentityHelpers.GetOpenCodeSessionHeaders(
+            new ClientIdentityTarget(model.Provider, model.BaseUrl), options.SessionId) is { } session
+            ? session.ToDictionary(entry => entry.Key, entry => (string?)entry.Value)
+            : null;
+        // pi models.ts:883：session 头最底层，auth.headers 次之，请求 headers 最高。
+        var headers = MergeHeaders(sessionHeaders, MergeHeaders(auth.Auth.Headers, options.Headers));
         var env = MergeEnv(auth.Env, options.Env);
         return options with
         {
@@ -99,10 +104,14 @@ public sealed partial class Models
         };
     }
 
-    private static SimpleStreamOptions ApplyAuthOptions(SimpleStreamOptions? options, AuthResult auth)
+    private static SimpleStreamOptions ApplyAuthOptions(Model model, SimpleStreamOptions? options, AuthResult auth)
     {
         options ??= new SimpleStreamOptions();
-        var headers = MergeHeaders(auth.Auth.Headers, options.Headers);
+        var sessionHeaders = ClientIdentityHelpers.GetOpenCodeSessionHeaders(
+            new ClientIdentityTarget(model.Provider, model.BaseUrl), options.SessionId) is { } session
+            ? session.ToDictionary(entry => entry.Key, entry => (string?)entry.Value)
+            : null;
+        var headers = MergeHeaders(sessionHeaders, MergeHeaders(auth.Auth.Headers, options.Headers));
         var env = MergeEnv(auth.Env, options.Env);
         return options with
         {
