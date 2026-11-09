@@ -72,15 +72,37 @@ public sealed partial class Agent
             var steering = _steeringQueue.Drain();
             if (steering.Count > 0)
             {
-                await RunPromptMessages(steering, skipInitialSteeringPoll: true)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await RunPromptMessages(steering, skipInitialSteeringPoll: true)
+                        .ConfigureAwait(false);
+                }
+                catch (InvalidOperationException error)
+                    when (error.Message == "Agent is already processing.")
+                {
+                    // 竞态恢复：排空后、开跑前另一控制调用抢占了运行槽；
+                    // 把已排空消息插回队首再按"已在处理"语义抛出，不丢消息。
+                    _steeringQueue.Prepend(steering);
+                    throw new InvalidOperationException(
+                        "Agent is already processing. Wait for completion before continuing.");
+                }
                 return;
             }
 
             var followUps = _followUpQueue.Drain();
             if (followUps.Count > 0)
             {
-                await RunPromptMessages(followUps).ConfigureAwait(false);
+                try
+                {
+                    await RunPromptMessages(followUps).ConfigureAwait(false);
+                }
+                catch (InvalidOperationException error)
+                    when (error.Message == "Agent is already processing.")
+                {
+                    _followUpQueue.Prepend(followUps);
+                    throw new InvalidOperationException(
+                        "Agent is already processing. Wait for completion before continuing.");
+                }
                 return;
             }
 

@@ -383,4 +383,71 @@ public class FauxDeferredTests
         var final = await stream.WaitForDoneAsync();
         Assert.Equal(StopReason.Aborted, final.StopReason);
     }
+
+    [Fact]
+    public async Task OnResponse_Is_Invoked_On_Fetch_And_On_Cancel()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+        var first = await faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled(),
+        }).WaitForDoneAsync();
+        var handle = first.Deferred!;
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+
+        var fetchedResponses = new List<ProviderResponse>();
+        await provider.FetchDeferredAsync(model, handle, new DeferredFetchOptions
+        {
+            OnResponse = (response, _) =>
+            {
+                fetchedResponses.Add(response);
+                return Task.CompletedTask;
+            },
+        });
+
+        var fetched = Assert.Single(fetchedResponses);
+        Assert.Equal(200, fetched.Status);
+        Assert.Empty(fetched.Headers);
+
+        var cancelResponses = new List<ProviderResponse>();
+        await provider.CancelDeferredAsync(model, handle, new DeferredCancelOptions
+        {
+            OnResponse = (response, _) =>
+            {
+                cancelResponses.Add(response);
+                return Task.CompletedTask;
+            },
+        });
+
+        var cancelled = Assert.Single(cancelResponses);
+        Assert.Equal(200, cancelled.Status);
+        Assert.Empty(cancelled.Headers);
+    }
+
+    [Fact]
+    public async Task Mismatched_Handle_Reports_Unknown_Error()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+        var first = await faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled(),
+        }).WaitForDoneAsync();
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+
+        var mismatched = first.Deferred! with { Provider = "other" };
+        var fetched = await provider.FetchDeferredAsync(model, mismatched, null);
+
+        Assert.Equal(StopReason.Error, fetched.StopReason);
+        Assert.Equal($"Unknown faux deferred response: {first.Deferred!.Id}", fetched.ErrorMessage);
+    }
 }

@@ -48,6 +48,20 @@ public class AgentQueueTests
     }
 
     [Fact]
+    public void Prepend_Restores_Drained_Messages_In_Order()
+    {
+        var queue = new PendingMessageQueue(QueueMode.All);
+        queue.Enqueue(M("later"));
+        queue.Prepend(new[] { M("a"), M("b") });
+
+        var drained = queue.Drain();
+        Assert.Equal(3, drained.Count);
+        Assert.Equal("a", Assert.IsType<TextContent>(Assert.IsType<UserMessage>(drained[0]).Content.ToBlocks()[0]).Text);
+        Assert.Equal("b", Assert.IsType<TextContent>(Assert.IsType<UserMessage>(drained[1]).Content.ToBlocks()[0]).Text);
+        Assert.Equal("later", Assert.IsType<TextContent>(Assert.IsType<UserMessage>(drained[2]).Content.ToBlocks()[0]).Text);
+    }
+
+    [Fact]
     public void Peek_Does_Not_Consume_And_Steering_Priority_Is_Caller_Side()
     {
         var queue = new PendingMessageQueue(QueueMode.OneAtATime);

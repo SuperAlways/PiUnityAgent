@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using PiUnityAgent.Ai.Types;
 
 namespace PiUnityAgent.Core.Agent;
@@ -64,6 +65,19 @@ internal sealed class PendingMessageQueue
             var drained = Select();
             if (drained.Count > 0) _messages.RemoveRange(0, drained.Count);
             return drained;
+        }
+    }
+
+    /// <summary>把消息插回队首（Continue 启动被并发运行拒绝时恢复已排空消息）。</summary>
+    public void Prepend(IEnumerable<Message> messages)
+    {
+        lock (_gate)
+        {
+            var items = messages.ToList();
+            if (items.Count > 0)
+            {
+                _messages.InsertRange(0, items);
+            }
         }
     }
 
