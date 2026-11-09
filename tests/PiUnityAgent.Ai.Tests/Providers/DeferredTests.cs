@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Nodes;
 using PiUnityAgent.Ai.Events;
 using PiUnityAgent.Ai.Providers;
@@ -119,5 +120,33 @@ public class DeferredProviderCapabilityTests
         Assert.False(deferred.SupportsCancelDeferred);
         Assert.Throws<ModelsError>(() => deferred.StreamDeferred(Model(), Handle(), null));
         await Assert.ThrowsAsync<ModelsError>(() => deferred.CancelDeferredAsync(Model(), Handle(), null));
+    }
+
+    [Fact]
+    public void FactoryProvider_Capability_Scan_Tolerates_Null_ApiByApi_Entry()
+    {
+        // 工厂校验把 null 条目当"无实现"容忍；能力扫描不得在 null 条目上炸 NRE。
+        var provider = ProviderFactory.Create(new CreateProviderOptions
+        {
+            Id = "p1",
+            Auth = ProviderTestSupport.KeylessAuth(),
+            Models = new ProviderModel[] { Model() },
+            ApiByApi = new Dictionary<string, ProviderStreams>
+            {
+                ["faux"] = new ProviderStreams
+                {
+                    Stream = ProviderTestSupport.DoneStream,
+                    StreamSimple = (requestModel, context, streamOptions) =>
+                        ProviderTestSupport.DoneStream(requestModel, context, streamOptions),
+                    FetchDeferred = (requestModel, handle, fetchOptions) =>
+                        Done(requestModel, StopReason.Deferred, handle),
+                },
+                ["broken"] = null!,
+            },
+        });
+
+        var deferred = Assert.IsAssignableFrom<IDeferredProvider>(provider);
+        Assert.True(deferred.SupportsFetchDeferred);
+        Assert.False(deferred.SupportsCancelDeferred);
     }
 }

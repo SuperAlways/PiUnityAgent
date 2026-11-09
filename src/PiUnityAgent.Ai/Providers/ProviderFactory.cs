@@ -83,10 +83,10 @@ public static class ProviderFactory
         }
 
         public bool SupportsFetchDeferred => _single?.FetchDeferred is not null
-            || (_byApi?.Values.Any(streams => streams.FetchDeferred is not null) ?? false);
+            || (_byApi?.Values.Any(streams => streams is not null && streams.FetchDeferred is not null) ?? false);
 
         public bool SupportsCancelDeferred => _single?.CancelDeferred is not null
-            || (_byApi?.Values.Any(streams => streams.CancelDeferred is not null) ?? false);
+            || (_byApi?.Values.Any(streams => streams is not null && streams.CancelDeferred is not null) ?? false);
 
         public IAssistantMessageEventStream StreamDeferred(
             Model model,
