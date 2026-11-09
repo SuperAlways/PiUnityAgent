@@ -17,3 +17,4 @@
 | S7 | 2026-11-09 | **FAIL**（0 Critical / 2 Important：U-1 RunToolCall tools 形状、U-2 OCE 传播；8 Minor） | [`2026-11-09-S7-deviation-audit.md`](2026-11-09-S7-deviation-audit.md) | 修复后新审计者复核 |
 | S7 修复复核 | 2026-11-09 | **PASS_WITH_REGISTERED_DEVIATIONS**（U-1~U-10 全核销；N-1 已订正；0 Critical/Important） | [`2026-11-09-S7-deviation-recheck.md`](2026-11-09-S7-deviation-recheck.md) | 已随 `a6fc807` 合入 main |
 | S8 | 2026-11-10 | **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important；U-1~U-8 未登记 Minor + N-1~N-6 登记瑕疵）** | [`2026-11-10-S8-deviation-audit.md`](2026-11-10-S8-deviation-audit.md) | U-1/U-8 代码对齐；U-2~U-8/N-1~N-6 补 spec §6；新审计者复核 |
+| S8 修复复核 | 2026-11-10 | **PASS_WITH_REGISTERED_DEVIATIONS**（U-1~U-8/N-1~N-6 全核销；0 Shape gap / 0 Critical/Important；仅 R-1~R-3 文档备注） | [`2026-11-10-S8-deviation-recheck.md`](2026-11-10-S8-deviation-recheck.md) | 待用户验收合 main |

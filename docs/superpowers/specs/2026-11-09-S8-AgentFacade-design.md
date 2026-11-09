@@ -1,6 +1,6 @@
 # S8 Agent 门面设计 spec（2026-11-09）
 
-> **状态**：实现完成（`feature/s8-agent-facade`，HEAD `c8ce5aa`）。独立审计 **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important）**：U-1/U-8 已代码对齐，U-2~U-8/N-1~N-6 已补 §6 登记；待新独立审计者复核。实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)。
+> **状态**：实现完成（`feature/s8-agent-facade`）。独立审计 **FAIL（仅登记层面；0 Shape gap / 0 Critical / 0 Important）→ 修复/补登记 → 复核 PASS_WITH_REGISTERED_DEVIATIONS**：U-1/U-8 已代码对齐，U-2~U-8/N-1~N-6 已补 §6 登记。实现计划见 [`../plans/2026-11-09-S8-AgentFacade.md`](../plans/2026-11-09-S8-AgentFacade.md)。
 > **范围**：S8 = `Agent` 有状态门面：持有 transcript、发出生命周期事件、双队列（steer/followUp + `QueueMode`）、abort、状态订阅与运行生命周期；同时承接台账 **D3**（Deferred stream/fetch/cancel）、**D17**（助手轮次重试公共模块）、**D23**（QueueMode）。不做 `proxy.ts`（D22）、图片/分类（D4/D5）、S9 上下文组装、S10 会话树。
 > **参考版本**：pi `v1.5.0` / `f9a263655`；pi.net `main` / `2d6757b`；UnityLlmTransport `4c0cc4b` / `0.6.0`（仅通讯事实，S8 不引用）。
 > **上位规则**：[`docs/03-开发方法-拆解学习与移植约定.md`](../../03-开发方法-拆解学习与移植约定.md) §1.3；[`docs/05-教学阶段路线.md`](../../05-教学阶段路线.md) §S8；[`docs/SOP/阶段偏离审查-SOP-2026-11-08.md`](../../SOP/阶段偏离审查-SOP-2026-11-08.md)。
@@ -687,7 +687,7 @@ public static class Retry
 | D3 不支持文案（Models 层） | `Provider X does not support deferred responses`（models.ts:961/984） | 同 | 同（`ModelsError(Provider)`） | B | Models 层逐字；错误类型 C# 化 |
 | D3 不支持文案（provider 层） | 工厂层 fetch=`Provider X does not support deferred responses for "<api>"`；cancel=`Provider X cannot cancel deferred responses for "<api>"`（models.ts:1167-1185） | 同? | 两处统一 `Provider <id> does not support deferred responses` | B | 经 Models 消费文案逐字；直调 provider 时不带 `for "<api>"` / 不用 `cannot cancel`；审计 U-3 登记 |
 | D3 provider 直调错误面 | 工厂 `fetchDeferred` 包 lazyStream，直调 provider 返回流、缺实现为终态 Error | 同 | `CreatedProvider`/`StaticProvider` 直调时同步抛 `ModelsError`；经 `Models.StreamDeferred` 消费等价为终态 Error | B | 审计 U-4 登记；代价=绕过 Models 直调 provider 的调用方需 catch |
-| D3 Faux 错误终态标识/时间戳 | 错误消息用 provider 级 api/provider + `requestModel.id` + `Date.now()`（faux.ts:322-336,678-681） | 同 | 复用既有 `EmitError`：请求 model + `Timestamp=0` | D/B | 非默认 Api/Provider 的 Faux 实例可见差异；默认配置下值相同；审计 U-2 登记 |
+| D3 Faux 错误终态标识/时间戳 | 错误消息用 provider 级 api/provider + `requestModel.id` + `Date.now()`（`createErrorMessage` faux.ts:322-336；fetch 调用点 536-541/579/636/648） | 同 | 复用既有 `EmitError`：请求 model + `Timestamp=0` | D/B | 非默认 Api/Provider 的 Faux 实例可见差异；默认配置下值相同；审计 U-2 登记 |
 | D3 Faux handle id | `Date.now()` + `Math.random()` | 同? | `deferred:{n}` provider 单调计数 | D | 测试确定性（S7 Faux 同纪律）；代价=id 不含时间 |
 | D3 fetch/cancel onResponse | 200 + 空头 | 同 | 同 | B | ProviderResponse 形状已有 |
 | D3 fetch 缓存 | entry.final 缓存一次 | 同 | 同 | B | 与 pi 一致 |
