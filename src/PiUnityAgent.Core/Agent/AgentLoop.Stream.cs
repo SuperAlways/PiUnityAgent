@@ -28,11 +28,13 @@ public static partial class AgentLoop
         var llmMessages = await config.ConvertToLlm(messages).ConfigureAwait(false);
         var llmContext = TranscriptNormalization.NormalizeContext(new Context { Messages = llmMessages });
 
-        // 解析 API key（支持会过期的短时 token）。
-        var resolvedApiKey = config.GetApiKey is not null
-            ? await config.GetApiKey(config.Model.Provider, signal).ConfigureAwait(false)
-            : null;
-        resolvedApiKey ??= config.StreamOptions?.ApiKey;
+        // 解析 API key（支持会过期的短时 token）。TS 用 JS 真值（||）合并：getApiKey 返回
+        // 空串/None 都回退到 StreamOptions.ApiKey；无 getApiKey 时直接用 StreamOptions.ApiKey。
+        var resolvedApiKey = config.GetApiKey is null
+            ? config.StreamOptions?.ApiKey
+            : await config.GetApiKey(config.Model.Provider, signal).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(resolvedApiKey))
+            resolvedApiKey = config.StreamOptions?.ApiKey;
 
         // TS：`identity: mergeClientIdentity(DEFAULT_AGENT_IDENTITY, config.identity)`。
         var identity = ClientIdentityMerger.Merge(DefaultAgentIdentity, config.Identity);
@@ -114,22 +116,21 @@ public static partial class AgentLoop
             await enumerator.DisposeAsync().ConfigureAwait(false);
         }
 
-        // 流意外结束（无终态事件）：以当前快照收尾。
-        var fallback = RecordThinkingLevel(partialMessage ?? new AssistantMessage
-        {
-            Content = Array.Empty<ContentBlock>(),
-            Api = config.Model.Api,
-            Provider = config.Model.Provider,
-            Model = config.Model.Id,
-            Usage = new Usage(),
-            StopReason = StopReason.Error,
-            ErrorMessage = "Stream ended without a terminal event",
-            Timestamp = 0,
-        });
+        // 流意外结束（无终态事件）：取流终值收尾（TS `await result()`；spec §4.2.4「仍取 result」）。
+        // 本路径只在事件迭代正常结束（流已收场）后到达，WaitForDoneAsync 立即返回。
+        // 收尾不变式与 TS 一致：每条助手消息保证 message_start 先于 message_end——
+        // 已发过 start（有 partial）则不重复，无 partial 则在 end 前补发。
+        var fallback = RecordThinkingLevel(
+            await response.WaitForDoneAsync(CancellationToken.None).ConfigureAwait(false));
         if (addedPartial)
+        {
             context.Messages[^1] = fallback;
+        }
         else
+        {
             context.Messages.Add(fallback);
+            await emit(new AgentEvent.MessageStart(fallback)).ConfigureAwait(false);
+        }
         await emit(new AgentEvent.MessageEnd(fallback)).ConfigureAwait(false);
         return fallback;
     }

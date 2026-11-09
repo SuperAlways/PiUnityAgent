@@ -615,4 +615,122 @@ public class AgentLoopTests
         });
         Assert.Contains("No default stream function configured", error.Message);
     }
+
+    // ---------- 流收尾（无终态事件） ----------
+
+    /// <summary>构造一个不发终态事件、直接以 End(终值) 收场的流（faux 恒发终态事件，造不出此路径）。</summary>
+    private static StreamFn StreamEndingWithoutTerminal(AssistantMessage final, params AssistantMessageEvent[] events)
+        => (_, _, _) =>
+        {
+            var stream = new AssistantMessageEventStream();
+            foreach (var @event in events) stream.Push(@event);
+            stream.End(final);
+            return stream;
+        };
+
+    private static void AssertSingleAssistantStartBeforeEnd(
+        List<AgentEvent> events, out AgentEvent.MessageStart start, out AgentEvent.MessageEnd end)
+    {
+        var starts = events.OfType<AgentEvent.MessageStart>().Where(e => e.Message is AssistantMessage).ToList();
+        var ends = events.OfType<AgentEvent.MessageEnd>().Where(e => e.Message is AssistantMessage).ToList();
+        Assert.Single(starts);
+        Assert.Single(ends);
+        Assert.True(events.IndexOf(starts[0]) < events.IndexOf(ends[0]), "message_start 应先于 message_end");
+        start = starts[0];
+        end = ends[0];
+    }
+
+    [Fact]
+    public async Task Stream_Ending_Without_Terminal_Event_Still_Emits_Message_Start_And_End()
+    {
+        var final = Faux.AssistantMessage(Faux.Text("hello"));
+        var startPartial = final with { Content = Array.Empty<ContentBlock>(), StopReason = StopReason.Pending };
+        var deltaPartial = final with
+        {
+            Content = new ContentBlock[] { new TextContent { Text = "hel" } },
+            StopReason = StopReason.Pending,
+        };
+        var faux = FauxProviderWith(); // 本用例的流由自定义 StreamFn 提供，faux 队列不消费
+        var stream = AgentLoop.Loop(
+            new Message[] { UserPrompt("hi") },
+            new AgentContext { Messages = new List<Message>() },
+            Config(faux.GetModel()),
+            CancellationToken.None,
+            StreamEndingWithoutTerminal(
+                final,
+                new AssistantMessageEvent.Start(startPartial),
+                new AssistantMessageEvent.TextDelta(0, "hel", deltaPartial)));
+        var events = await CollectAsync(stream);
+        var result = await stream.WaitForResultAsync();
+
+        AssertSingleAssistantStartBeforeEnd(events, out _, out var end);
+
+        // 终值取流终值（End 传入的 final），不是最后的 partial 快照（TS `await result()`）。
+        var endMessage = Assert.IsType<AssistantMessage>(end.Message);
+        Assert.Equal("hello", Assert.IsType<TextContent>(endMessage.Content[0]).Text);
+        Assert.Equal(StopReason.Stop, endMessage.StopReason);
+        Assert.Equal(2, result.Count);
+        Assert.Equal("hello", Assert.IsType<TextContent>(Assert.IsType<AssistantMessage>(result[^1]).Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Stream_Completing_Without_Any_Event_Emits_Message_Start_And_End()
+    {
+        // 修复点：完全无事件的流收尾也补发 message_start（此前只发 message_end，违反 start→end 不变式）。
+        var final = Faux.AssistantMessage(Faux.Text("quiet"));
+        var faux = FauxProviderWith();
+        var stream = AgentLoop.Loop(
+            new Message[] { UserPrompt("hi") },
+            new AgentContext { Messages = new List<Message>() },
+            Config(faux.GetModel()),
+            CancellationToken.None,
+            StreamEndingWithoutTerminal(final));
+        var events = await CollectAsync(stream);
+        var result = await stream.WaitForResultAsync();
+
+        AssertSingleAssistantStartBeforeEnd(events, out var start, out _);
+        Assert.Equal("quiet", Assert.IsType<TextContent>(Assert.IsType<AssistantMessage>(start.Message).Content[0]).Text);
+        Assert.Equal(2, result.Count);
+        Assert.Equal("quiet", Assert.IsType<TextContent>(Assert.IsType<AssistantMessage>(result[^1]).Content[0]).Text);
+    }
+
+    // ---------- getApiKey 回退（JS 真值语义） ----------
+
+    [Fact]
+    public async Task GetApiKey_Empty_String_Falls_Back_To_StreamOptions_ApiKey()
+    {
+        var faux = FauxProviderWith(new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("hi"))));
+        var seenApiKeys = new List<string?>();
+        var fauxStream = faux.Provider.Stream;
+        StreamFn streamFn = (model, context, options) =>
+        {
+            seenApiKeys.Add(options?.ApiKey);
+            return fauxStream(model, context, options);
+        };
+
+        // getApiKey 返回空串：按 TS 的 || 真值回退到 StreamOptions.ApiKey（?? 语义不会回退）。
+        var emptyConfig = Config(faux.GetModel()) with
+        {
+            GetApiKey = (_, _) => Task.FromResult<string?>(""),
+            StreamOptions = new SimpleStreamOptions { ApiKey = "fallback" },
+        };
+        await AgentLoop.RunAsync(
+            new Message[] { UserPrompt("hi") },
+            new AgentContext { Messages = new List<Message>() },
+            emptyConfig, _ => Task.CompletedTask, CancellationToken.None, streamFn);
+        Assert.Equal(new string?[] { "fallback" }, seenApiKeys);
+
+        // 非空值不被覆盖。
+        seenApiKeys.Clear();
+        var realConfig = Config(faux.GetModel()) with
+        {
+            GetApiKey = (_, _) => Task.FromResult<string?>("real-key"),
+            StreamOptions = new SimpleStreamOptions { ApiKey = "fallback" },
+        };
+        await AgentLoop.RunAsync(
+            new Message[] { UserPrompt("hi") },
+            new AgentContext { Messages = new List<Message>() },
+            realConfig, _ => Task.CompletedTask, CancellationToken.None, streamFn);
+        Assert.Equal(new string?[] { "real-key" }, seenApiKeys);
+    }
 }
