@@ -733,7 +733,8 @@ public static class AnthropicMessages
                     }
 
                     var delta = JsonObj(@event, "delta");
-                    if (JsonStr(delta, "stop_reason") is { } rawStopReason)
+                    // pi anthropic-messages.ts:841：`if (event.delta.stop_reason)` 真值判断，空串视为未上报。
+                    if (JsonStr(delta, "stop_reason") is { Length: > 0 } rawStopReason)
                     {
                         output.RawStopReason = rawStopReason;
                         var (mapped, errorMessage) = MapStopReason(

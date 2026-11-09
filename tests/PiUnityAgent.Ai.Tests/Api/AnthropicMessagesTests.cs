@@ -1352,6 +1352,20 @@ public class AnthropicMessagesTests
     }
 
     [Fact]
+    public async Task Empty_Stop_Reason_Is_Ignored()
+    {
+        // pi：空串 falsy 被跳过；随后无有效 stop reason，落到与 pi 相同的 pending 终态错误。
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(MessageStart(), MessageDelta(""), MessageStop()), headers: SseHeaders());
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        var error = Assert.IsType<AssistantMessageEvent.Error>(events[^1]);
+        Assert.Equal(StopReason.Error, error.Reason);
+        Assert.Contains("ended without a stop reason", error.Message.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Missing_Stop_Is_Error()
     {
         // message_stop 到了但没带 stop_reason：pending 判错，partial 文本保留。
