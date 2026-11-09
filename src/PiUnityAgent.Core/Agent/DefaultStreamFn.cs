@@ -1,5 +1,7 @@
 using PiUnityAgent.Ai.Types;
 
+// TODO(后续扩展, D22): proxy.ts 服务端代理流函数未移植（server RPC 路线）。
+
 namespace PiUnityAgent.Core.Agent;
 
 /// <summary>

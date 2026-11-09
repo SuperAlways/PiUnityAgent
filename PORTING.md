@@ -93,6 +93,17 @@
 
 ---
 
+## 3B. S7 Agent Loop 补充映射（2026-11-09）
+
+| pi 源 | 我们的落点 | 状态 |
+|---|---|---|
+| `packages/agent/src/agent-loop.ts` | `src/PiUnityAgent.Core/Agent/*` | ✅ S7 |
+| `packages/agent/src/stream-fn.ts` | `src/PiUnityAgent.Core/Agent/DefaultStreamFn.cs` | ✅ S7 |
+| `packages/agent/src/proxy.ts` | —（D22） | 🟡 后续扩展 |
+| `packages/ai/src/utils/streaming-json.ts`、`json-parse.ts` | `src/PiUnityAgent.Ai/Utils/{StreamingJson,JsonParse}.cs` | ✅ S7/D16 |
+
+---
+
 ## 4. 偏离登记规则
 
 1. 任何**改名、拆分、裁剪**都写进本表"偏离说明"，不静默处理。
