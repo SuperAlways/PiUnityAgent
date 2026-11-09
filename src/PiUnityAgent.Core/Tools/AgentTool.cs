@@ -18,7 +18,7 @@ public sealed record AgentTool
     /// <summary>UI 显示名（与只给模型的 Description 分受众）。对应 pi AgentTool.label。</summary>
     public required string Label { get; init; }
 
-    /// <summary>provider 侧约束采样；对应 pi Tool.constrainedSampling（false 折叠为 null）。</summary>
+    /// <summary>provider 侧约束采样；对应 pi Tool.constrainedSampling（以 Disabled 变体表达 false；null 表未指定，比 pi 的 false｜Config 多一档区分）。</summary>
     public ConstrainedSampling? ConstrainedSampling { get; init; }
 
     /// <summary>校验前的参数兼容垫片；入参为原始 JsonObject，返回待校验值。对应 pi prepareArguments。</summary>

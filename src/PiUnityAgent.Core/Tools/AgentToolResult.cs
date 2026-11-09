@@ -26,7 +26,7 @@ public sealed record AgentToolResult
     /// <summary>批次提前终止提示（全批都为 true 才生效，归 S7）。对应 pi terminate。</summary>
     public bool Terminate { get; init; }
 
-    /// <summary>pi createErrorToolResult 等价：文本错误 + details={} + isError。</summary>
+    /// <summary>pi 工具作者契约（返回 IsError=true 的结果）+ pi createErrorToolResult 的 details:{} 缺省；pi 的 isError 由 outcome 层承载。</summary>
     public static AgentToolResult FromError(string message, JsonNode? details = null)
         => new()
         {

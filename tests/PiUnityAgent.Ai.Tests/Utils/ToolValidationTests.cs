@@ -97,4 +97,38 @@ public class ToolValidationTests
         Assert.Equal("42", result!["value"]!.ToJsonString());
     }
 
+    [Fact]
+    public void Single_Value_Is_Wrapped_Into_Array()
+    {
+        var tool = EchoTool(new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["xs"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "integer" } },
+            },
+        });
+        var result = ToolValidation.ValidateToolArguments(tool, Call("echo", new JsonObject { ["xs"] = "7" }));
+        Assert.Equal("[7]", result!["xs"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void Optional_Null_Is_Dropped()
+    {
+        var tool = EchoTool(new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject { ["a"] = new JsonObject { ["type"] = "string" } },
+        });
+        var result = ToolValidation.ValidateToolArguments(tool, Call("echo", new JsonObject { ["a"] = null }));
+        Assert.False(result!.AsObject().ContainsKey("a"));
+    }
+
+    [Fact]
+    public void Validator_Is_Cached_Per_Schema_Instance()
+    {
+        var schema = NumberSchema();
+        Assert.Same(ToolValidation.ValidatorFor(schema), ToolValidation.ValidatorFor(schema));
+    }
+
 }
