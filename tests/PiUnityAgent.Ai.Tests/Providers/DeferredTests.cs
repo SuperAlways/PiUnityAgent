@@ -254,3 +254,133 @@ public class DeferredModelsTests
         Assert.Equal(StopReason.Stop, message.StopReason);
     }
 }
+
+public class FauxDeferredTests
+{
+    private static TranscriptContext Context() => new() { Messages = Array.Empty<Message>() };
+
+    [Fact]
+    public async Task Deferred_Request_Emits_Handle_And_Fetch_Returns_Final_After_Pending()
+    {
+        var faux = new FauxProvider(new FauxProviderOptions
+        {
+            Deferred = new FauxDeferredOptions { PendingFetches = 1, PollAfterMs = 50 },
+        });
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+
+        var stream = faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled("1h"),
+        });
+        var first = await stream.WaitForDoneAsync();
+        Assert.Equal(StopReason.Deferred, first.StopReason);
+        Assert.NotNull(first.Deferred);
+        Assert.StartsWith("deferred:", first.Deferred!.Id);
+        Assert.Equal(50, first.Deferred!.PollAfterMs);
+
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+        var pending = await provider.FetchDeferredAsync(model, first.Deferred!, null);
+        Assert.Equal(StopReason.Deferred, pending.StopReason);
+        Assert.Equal(1, faux.State.DeferredFetchCount);
+
+        var final = await provider.FetchDeferredAsync(model, first.Deferred!, null);
+        Assert.Equal(StopReason.Stop, final.StopReason);
+        Assert.Equal("final", Assert.IsType<TextContent>(final.Content[0]).Text);
+        Assert.Equal(2, faux.State.DeferredFetchCount);
+
+        var cached = await provider.FetchDeferredAsync(model, first.Deferred!, null);
+        Assert.Equal("final", Assert.IsType<TextContent>(cached.Content[0]).Text);
+        Assert.Equal(3, faux.State.DeferredFetchCount);
+    }
+
+    [Fact]
+    public async Task Cancel_Marks_Handle_And_Fetch_Reports_Cancelled()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+
+        var first = await faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled(),
+        }).WaitForDoneAsync();
+        var handle = first.Deferred!;
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+
+        await provider.CancelDeferredAsync(model, handle, null);
+        Assert.Single(faux.State.CancelledDeferred);
+        Assert.Equal(handle.Id, faux.State.CancelledDeferred[0].Id);
+
+        var fetched = await provider.FetchDeferredAsync(model, handle, null);
+        Assert.Equal(StopReason.Error, fetched.StopReason);
+        Assert.Equal($"Faux deferred response was cancelled: {handle.Id}", fetched.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Unknown_Handle_Reports_Exact_Error()
+    {
+        var faux = new FauxProvider();
+        var model = faux.GetModel();
+        var unknown = new DeferredHandle
+        {
+            Provider = model.Provider,
+            ModelId = model.Id,
+            Api = model.Api,
+            Id = "missing",
+        };
+
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+        var fetched = await provider.FetchDeferredAsync(model, unknown, null);
+        Assert.Equal(StopReason.Error, fetched.StopReason);
+        Assert.Equal("Unknown faux deferred response: missing", fetched.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Disabled_Deferred_Produces_Normal_Response()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("normal"))),
+        });
+        var message = await faux.Provider.StreamSimple(faux.GetModel(), Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Disabled(),
+        }).WaitForDoneAsync();
+
+        Assert.Equal(StopReason.Stop, message.StopReason);
+        Assert.Null(message.Deferred);
+    }
+
+    [Fact]
+    public async Task Fetch_With_Cancelled_Token_Ends_Aborted()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+        var first = await faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled(),
+        }).WaitForDoneAsync();
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var stream = provider.StreamDeferred(model, first.Deferred!, new DeferredFetchOptions
+        {
+            CancellationToken = cts.Token,
+        });
+        var final = await stream.WaitForDoneAsync();
+        Assert.Equal(StopReason.Aborted, final.StopReason);
+    }
+}

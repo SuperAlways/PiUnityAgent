@@ -79,6 +79,15 @@ public sealed record FauxProviderOptions
     public int MinTokenSize { get; init; } = 3;
     public int MaxTokenSize { get; init; } = 5;
     public IClock? Clock { get; init; }
+    public FauxDeferredOptions? Deferred { get; init; }
+}
+
+public sealed record FauxDeferredOptions
+{
+    /// <summary>返回原 handle 的次数；之后一次取回返回最终结果。</summary>
+    public int PendingFetches { get; init; }
+
+    public int? PollAfterMs { get; init; }
 }
 
 public sealed class FauxProviderState
@@ -86,16 +95,13 @@ public sealed class FauxProviderState
     private int _callCount;
     private int _deferredFetchCount;
     private long _toolCallIndex;
+    private long _deferredIndex;
     public int CallCount => Volatile.Read(ref _callCount);
 
-    /// <summary>
-    /// D3 形状锚点：延迟取回计数仅保形状，计数递增随 S8 Deferred 行为一起落地。
-    /// </summary>
+    /// <summary>延迟取回次数；由 Deferred 取回通道递增。</summary>
     public int DeferredFetchCount => Volatile.Read(ref _deferredFetchCount);
 
-    /// <summary>
-    /// D3 形状锚点：已取消的延迟句柄收集列表仅保形状，填充随 S8 一起落地。
-    /// </summary>
+    /// <summary>已取消的延迟句柄（cancelDeferred 记录的深拷贝）。</summary>
     public List<DeferredHandle> CancelledDeferred { get; } = new();
 
     internal void IncrementCallCount() => Interlocked.Increment(ref _callCount);
@@ -106,6 +112,9 @@ public sealed class FauxProviderState
     /// 不用 DateTime.Now/Random）。
     /// </summary>
     internal long NextToolCallIndex() => Interlocked.Increment(ref _toolCallIndex);
+
+    /// <summary>Provider 级单调计数器，支撑确定性 Deferred handle id <c>deferred:{n}</c>。</summary>
+    internal long NextDeferredIndex() => Interlocked.Increment(ref _deferredIndex);
 }
 
 public delegate Task<AssistantMessage> FauxResponseFactory(

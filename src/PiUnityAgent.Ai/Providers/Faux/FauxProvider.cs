@@ -10,6 +10,8 @@ public sealed class FauxProvider
 {
     private readonly object _gate = new();
     private readonly Queue<FauxResponseStep> _responses = new();
+    private readonly object _deferredGate = new();
+    private readonly Dictionary<string, DeferredEntry> _deferredResponses = new(StringComparer.Ordinal);
     private readonly FauxProviderOptions _options;
     private readonly IClock _clock;
     private readonly FauxProviderState _state = new();
@@ -58,7 +60,9 @@ public sealed class FauxProvider
                     Name = "Faux",
                     Resolve = (_, _) => Task.FromResult<AuthResult?>(new AuthResult(new ModelAuth(), null, "Faux")),
                 },
-            });
+            },
+            fetchDeferred: FetchDeferredStream,
+            cancelDeferred: CancelDeferredAsync);
     }
 
     public IProvider Provider { get; }
@@ -127,6 +131,17 @@ public sealed class FauxProvider
                 return;
             }
 
+            // Deferred 请求：不解析最终消息，把响应步骤存档后发射 Deferred 终态（handle +
+            // 空 content）；最终结果延迟到 FetchDeferredAsync 时再解析/缓存。
+            if (options?.Deferred is DeferredRequest.Enabled)
+            {
+                var handle = CreateDeferredHandle(model);
+                StoreDeferred(handle, step, context, options, model);
+                await EmitMessageAsync(stream, CreateDeferredMessage(model, handle), cancellationToken)
+                    .ConfigureAwait(false);
+                return;
+            }
+
             AssistantMessage message;
             if (step is FauxResponseStep.Factory factory)
             {
@@ -137,14 +152,7 @@ public sealed class FauxProvider
                 message = ((FauxResponseStep.Response)step).Message;
             }
 
-            var final = message with
-            {
-                Api = model.Api,
-                Provider = model.Provider,
-                Model = model.Id,
-                Timestamp = message.Timestamp == 0 ? _clock.UtcNowMs() : message.Timestamp,
-                Usage = EstimateUsage(context, message),
-            };
+            var final = NormalizeFinal(model, context, message);
 
             await EmitMessageAsync(stream, final, cancellationToken).ConfigureAwait(false);
         }
@@ -416,4 +424,219 @@ public sealed class FauxProvider
         => _options.TokensPerSecond <= 0
             ? Task.CompletedTask
             : Task.Delay(TimeSpan.FromMilliseconds(1000.0 / _options.TokensPerSecond), cancellationToken);
+
+    private AssistantMessage NormalizeFinal(
+        Model model,
+        TranscriptContext context,
+        AssistantMessage message)
+        => message with
+        {
+            Api = model.Api,
+            Provider = model.Provider,
+            Model = model.Id,
+            Timestamp = message.Timestamp == 0 ? _clock.UtcNowMs() : message.Timestamp,
+            Usage = EstimateUsage(context, message),
+        };
+
+    private DeferredHandle CreateDeferredHandle(Model model) => new()
+    {
+        Provider = model.Provider,
+        ModelId = model.Id,
+        Api = model.Api,
+        Id = $"deferred:{_state.NextDeferredIndex()}",
+        PollAfterMs = _options.Deferred?.PollAfterMs,
+    };
+
+    private AssistantMessage CreateDeferredMessage(Model model, DeferredHandle handle) => new()
+    {
+        Content = Array.Empty<ContentBlock>(),
+        Api = model.Api,
+        Provider = model.Provider,
+        Model = model.Id,
+        Usage = new Usage(),
+        StopReason = StopReason.Deferred,
+        Deferred = handle,
+        Timestamp = _clock.UtcNowMs(),
+    };
+
+    private void StoreDeferred(
+        DeferredHandle handle,
+        FauxResponseStep step,
+        TranscriptContext context,
+        SimpleStreamOptions options,
+        Model model)
+    {
+        var entry = new DeferredEntry
+        {
+            Handle = handle,
+            Step = step,
+            Context = context,
+            Options = options,
+            Model = model,
+            PendingFetches = Math.Max(0, _options.Deferred?.PendingFetches ?? 0),
+        };
+        lock (_deferredGate) _deferredResponses[handle.Id] = entry;
+    }
+
+    private IAssistantMessageEventStream FetchDeferredStream(
+        Model model,
+        DeferredHandle handle,
+        DeferredFetchOptions? options)
+    {
+        _state.IncrementDeferredFetchCount();
+        var stream = new AssistantMessageEventStream();
+        var cancellationToken = options?.CancellationToken ?? default;
+        _ = FetchDeferredCoreAsync(stream, model, handle, options, cancellationToken);
+        return stream;
+    }
+
+    private async Task FetchDeferredCoreAsync(
+        AssistantMessageEventStream stream,
+        Model model,
+        DeferredHandle handle,
+        DeferredFetchOptions? options,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (options?.OnResponse is not null)
+            {
+                await options.OnResponse(
+                    new ProviderResponse(200, new Dictionary<string, string>()),
+                    model).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            DeferredEntry entry;
+            lock (_deferredGate)
+            {
+                if (!_deferredResponses.TryGetValue(handle.Id, out var found)
+                    || found.Handle.Provider != handle.Provider
+                    || found.Handle.ModelId != handle.ModelId
+                    || found.Handle.Api != handle.Api)
+                {
+                    throw new InvalidOperationException(
+                        $"Unknown faux deferred response: {handle.Id}");
+                }
+                if (found.Cancelled)
+                {
+                    throw new InvalidOperationException(
+                        $"Faux deferred response was cancelled: {handle.Id}");
+                }
+                entry = found;
+            }
+
+            if (entry.PendingFetches > 0)
+            {
+                lock (_deferredGate) entry.PendingFetches--;
+                await EmitMessageAsync(
+                    stream,
+                    CreateDeferredMessage(model, handle),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            AssistantMessage? final;
+            lock (_deferredGate) final = entry.Final;
+            if (final is null)
+            {
+                final = await ResolveDeferredFinalAsync(entry, model).ConfigureAwait(false);
+                lock (_deferredGate)
+                {
+                    // 单次解析：并发/重复取回共用首个解析结果。
+                    if (entry.Final is null)
+                    {
+                        entry.Final = final;
+                    }
+                    final = entry.Final;
+                }
+            }
+
+            // 走到此处 final 必非空（或已缓存/或刚解析）；`!` 仅消除流分析对
+            // entry.Final（AssistantMessage?）的保守告警。
+            await EmitMessageAsync(stream, final!, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            EmitAborted(stream, model, "Request was aborted");
+        }
+        catch (Exception error)
+        {
+            EmitError(stream, model, error.Message);
+        }
+    }
+
+    private async Task<AssistantMessage> ResolveDeferredFinalAsync(
+        DeferredEntry entry,
+        Model requestModel)
+    {
+        try
+        {
+            var submissionOptions = entry.Options with
+            {
+                Deferred = null,
+                CancellationToken = default,
+                OnResponse = null,
+            };
+            var message = entry.Step is FauxResponseStep.Factory factory
+                ? await factory.Create(entry.Context, submissionOptions, _state, entry.Model)
+                    .ConfigureAwait(false)
+                : ((FauxResponseStep.Response)entry.Step).Message;
+            return NormalizeFinal(entry.Model, entry.Context, message);
+        }
+        catch (Exception error)
+        {
+            return new AssistantMessage
+            {
+                Content = Array.Empty<ContentBlock>(),
+                Api = requestModel.Api,
+                Provider = requestModel.Provider,
+                Model = requestModel.Id,
+                Usage = new Usage(),
+                StopReason = StopReason.Error,
+                ErrorMessage = error.Message,
+                Timestamp = _clock.UtcNowMs(),
+            };
+        }
+    }
+
+    private async Task CancelDeferredAsync(
+        Model model,
+        DeferredHandle handle,
+        DeferredCancelOptions? options,
+        CancellationToken cancellationToken)
+    {
+        var clone = handle with
+        {
+            Data = handle.Data is null ? null : JsonNode.Parse(handle.Data.ToJsonString()),
+        };
+        lock (_deferredGate)
+        {
+            _state.CancelledDeferred.Add(clone);
+            if (_deferredResponses.TryGetValue(handle.Id, out var entry))
+            {
+                entry.Cancelled = true;
+            }
+        }
+
+        if (options?.OnResponse is not null)
+        {
+            await options.OnResponse(
+                new ProviderResponse(200, new Dictionary<string, string>()),
+                model).ConfigureAwait(false);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private sealed class DeferredEntry
+    {
+        public required DeferredHandle Handle { get; init; }
+        public required FauxResponseStep Step { get; init; }
+        public required TranscriptContext Context { get; init; }
+        public required SimpleStreamOptions Options { get; init; }
+        public required Model Model { get; init; }
+        public int PendingFetches { get; set; }
+        public bool Cancelled { get; set; }
+        public AssistantMessage? Final { get; set; }
+    }
 }
