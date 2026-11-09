@@ -1080,6 +1080,41 @@ public class AnthropicMessagesTests
     }
 
     [Fact]
+    public async Task Tool_Use_Input_Json_Delta_Partial_Snapshot_Grows()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(AnthropicSse(
+            MessageStart(),
+            ContentBlockStart(0, new JsonObject
+            {
+                ["type"] = "tool_use",
+                ["id"] = "toolu_1",
+                ["name"] = "get_weather",
+                ["input"] = new JsonObject(),
+            }),
+            JsonDelta(0, "{\"city\""),
+            JsonDelta(0, ":\"SF\"}"),
+            ContentBlockStop(0),
+            MessageDelta("tool_use"),
+            MessageStop()), headers: SseHeaders());
+
+        var events = await CollectAsync(AnthropicMessages.Stream(
+            CreateModel(), Context(UserMsg("hi")), CreateOptions(fetch)));
+
+        // mid-delta 的 partial 块参数已是部分 JSON（pi input_json_delta：append 结果回填块）。
+        var firstDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[2]);
+        Assert.Equal("{}", Assert.IsType<ToolCall>(firstDelta.Partial.Content[^1]).Arguments.ToJsonString());
+        var secondDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[3]);
+        Assert.Equal("{\"city\":\"SF\"}",
+            Assert.IsType<ToolCall>(secondDelta.Partial.Content[^1]).Arguments.ToJsonString());
+
+        // 终值完整。
+        var end = Assert.IsType<AssistantMessageEvent.ToolCallEnd>(events[^2]);
+        Assert.Equal("SF", end.ToolCall.Arguments["city"]?.GetValue<string>());
+        Assert.Null(end.ToolCall.ArgumentsError);
+    }
+
+    [Fact]
     public async Task Tool_Invalid_Argument_Json_Lands_ArgumentsError()
     {
         var fetch = new MockFetch();

@@ -364,6 +364,41 @@ public class OpenAiResponsesTests
         Assert.Equal(StopReason.ToolUse, done.Reason);
     }
 
+    [Fact]
+    public async Task Function_Call_Arguments_Delta_Partial_Snapshot_Grows()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(
+                CreatedEvent(),
+                ItemAdded(0, (JsonObject)JsonNode.Parse(
+                    "{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\","
+                    + "\"name\":\"get_weather\",\"arguments\":\"\"}")!),
+                ArgumentsDelta(0, "{\"city\""),
+                ArgumentsDelta(0, ":\"SF\"}"),
+                ArgumentsDone(0, "{\"city\":\"SF\"}"),
+                ItemDone(0, (JsonObject)JsonNode.Parse(
+                    "{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\","
+                    + "\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"SF\\\"}\"}")!),
+                CompletedEvent()),
+            headers: SseHeaders());
+
+        var events = await CollectAsync(OpenAiResponses.Stream(
+            CreateModel(), CreateContext(), CreateOptions(fetch)));
+
+        // mid-delta 的 partial 块参数已是部分 JSON（pi：append/replace 结果回填块）。
+        var firstDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[2]);
+        Assert.Equal("{}", Assert.IsType<ToolCall>(firstDelta.Partial.Content[^1]).Arguments.ToJsonString());
+        var secondDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[3]);
+        Assert.Equal("{\"city\":\"SF\"}",
+            Assert.IsType<ToolCall>(secondDelta.Partial.Content[^1]).Arguments.ToJsonString());
+
+        // 终值完整（arguments.done 的全量文本与已累积一致 → 无新增 delta）。
+        var end = Assert.IsType<AssistantMessageEvent.ToolCallEnd>(events[^2]);
+        Assert.Equal("SF", end.ToolCall.Arguments["city"]?.GetValue<string>());
+        Assert.Null(end.ToolCall.ArgumentsError);
+    }
+
     private static string ArgumentsDelta(int outputIndex, string delta)
     {
         var @event = ResponseEvent("response.function_call_arguments.delta");

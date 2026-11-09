@@ -1376,18 +1376,16 @@ public static class OpenAiResponses
 
                 case "function_call":
                 {
+                    // pi openai-responses-shared.ts:559：初始 arguments 也走 append，partial 进 ToolCallStart 快照。
                     var arguments = new ToolCallArguments();
-                    var initialArguments = JsonStr(item, "arguments");
-                    if (!string.IsNullOrEmpty(initialArguments))
-                    {
-                        arguments.Append(initialArguments);
-                    }
-
+                    var initialArguments = JsonStr(item, "arguments") ?? "";
                     var block = new ToolCallStreamBlock
                     {
                         Id = $"{JsonStr(item, "call_id") ?? ""}|{JsonStr(item, "id") ?? ""}",
                         Name = JsonStr(item, "name") ?? "",
-                        Arguments = new JsonObject(),
+                        Arguments = initialArguments.Length > 0
+                            ? arguments.Append(initialArguments)
+                            : new JsonObject(),
                     };
                     if (JsonStr(item, "namespace") is { } functionNamespace)
                     {
@@ -1603,7 +1601,8 @@ public static class OpenAiResponses
                     }
 
                     var delta = JsonStr(@event, "delta") ?? "";
-                    slot.JsonArguments.Append(delta);
+                    // pi openai-responses-shared.ts:734：append 的 partial 参数回填块，partial 消息可见。
+                    slot.ToolCall!.Arguments = slot.JsonArguments.Append(delta);
                     PushToolCallDelta(slot, delta);
                     break;
                 }
@@ -1617,9 +1616,12 @@ public static class OpenAiResponses
                         continue;
                     }
 
-                    var replaced = ReplaceArguments(slot.JsonArguments, JsonStr(@event, "arguments") ?? "");
-                    slot.JsonArguments = replaced.Arguments;
-                    PushToolCallDelta(slot, replaced.Delta);
+                    // pi openai-responses-shared.ts:735：replace 的 partial 参数回填块；
+                    // `if (replaced.delta)` 真值判断——全量文本与已累积一致（delta 为空串）不推 delta。
+                    var (replacedDelta, replacedArguments) =
+                        slot.JsonArguments.Replace(JsonStr(@event, "arguments") ?? "");
+                    slot.ToolCall!.Arguments = replacedArguments;
+                    PushToolCallDelta(slot, replacedDelta is { Length: > 0 } ? replacedDelta : null);
                     break;
                 }
 
@@ -1686,25 +1688,18 @@ public static class OpenAiResponses
 
                         case "function_call" when slot?.Kind == SlotKind.ToolCall && slot.JsonArguments is not null:
                         {
-                            var arguments = slot.JsonArguments;
                             if (JsonStr(item, "arguments") is { } finalArguments)
                             {
-                                // pi：replace 的返回 delta 在此处不推送（只在 arguments.done 事件推）。
-                                slot.JsonArguments = ReplaceArguments(arguments, finalArguments).Arguments;
+                                // pi：replace 的返回 delta 在此处不推送，partial 也不回填块（只保 Text 接续，
+                                // 随后的 finish 才给块终值）。
+                                slot.JsonArguments.Replace(finalArguments);
                             }
 
                             var block = slot.ToolCall!;
-                            try
-                            {
-                                block.Arguments = slot.JsonArguments.Finish();
-                            }
-                            catch (JsonException argumentsError)
-                            {
-                                // pi parseToolCallArguments：非法 JSON 不失败流，落 argumentsError。
-                                block.Arguments = new JsonObject();
-                                block.ArgumentsError =
-                                    $"{argumentsError.Message}\n\nReceived arguments:\n{slot.JsonArguments.Text}";
-                            }
+                            // pi：Object.assign(block, arguments.finish())；非法 JSON 不失败流，落 argumentsError。
+                            var (arguments, argumentsError) = slot.JsonArguments.Finish();
+                            block.Arguments = arguments;
+                            block.ArgumentsError = argumentsError;
 
                             if (JsonStr(item, "namespace") is { } functionNamespace)
                             {
@@ -1814,32 +1809,6 @@ public static class OpenAiResponses
             if (node is not JsonObject entry) return "";
             return JsonStr(entry, "type") == "output_text" ? JsonStr(entry, "text") ?? "" : JsonStr(entry, "refusal") ?? "";
         }));
-    }
-
-    /// <summary>
-    /// pi ToolCallArgumentsStream.replace（utils/streaming-json.ts）：全量参数文本接续已累积文本时
-    /// 返回缺失片段；否则重置重新累积（delta 为 null）。partial 参数对象不进入块（Task 4/5 已定型的
-    /// 最小基础设施：仅原始文本累积，终值在 Finish 才解析）。
-    /// </summary>
-    private static (string? Delta, ToolCallArguments Arguments) ReplaceArguments(
-        ToolCallArguments existing, string text)
-    {
-        var accumulated = existing.Text;
-        if (text.StartsWith(accumulated, StringComparison.Ordinal))
-        {
-            var delta = text[accumulated.Length..];
-            if (delta.Length > 0)
-            {
-                existing.Append(delta);
-                return (delta, existing);
-            }
-
-            return (null, existing);
-        }
-
-        var fresh = new ToolCallArguments();
-        fresh.Append(text);
-        return (null, fresh);
     }
 
     /// <summary>流式 custom（grammar）工具输入追加；返回其 JSON 参数文本的对应片段。</summary>

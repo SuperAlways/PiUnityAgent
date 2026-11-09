@@ -243,6 +243,31 @@ public class OpenAiCompletionsTests
     }
 
     [Fact]
+    public async Task Tool_Call_Delta_Partial_Snapshot_Grows()
+    {
+        var fetch = new MockFetch();
+        fetch.EnqueueText(
+            Sse(
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\","
+                + "\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}",
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":"
+                + "{\"arguments\":\"{\\\"city\\\"\"}}]}}]}",
+                "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":"
+                + "{\"arguments\":\":\\\"SF\\\"}\"}}]}}]}",
+                ChoiceChunk("{}", finishReason: "tool_calls")),
+            headers: SseHeaders());
+
+        var events = await CollectAsync(OpenAiCompletions.Stream(
+            CreateModel(), CreateContext(), CreateOptions(fetch)));
+
+        var firstDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[3]);
+        Assert.Equal("{}", Assert.IsType<ToolCall>(firstDelta.Partial.Content[^1]).Arguments.ToJsonString());
+        var secondDelta = Assert.IsType<AssistantMessageEvent.ToolCallDelta>(events[4]);
+        Assert.Equal("{\"city\":\"SF\"}",
+            Assert.IsType<ToolCall>(secondDelta.Partial.Content[^1]).Arguments.ToJsonString());
+    }
+
+    [Fact]
     public async Task Usage_And_Cost_Are_Parsed()
     {
         var fetch = new MockFetch();

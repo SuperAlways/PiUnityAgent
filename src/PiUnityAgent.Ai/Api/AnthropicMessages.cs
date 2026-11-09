@@ -668,7 +668,8 @@ public static class AnthropicMessages
                         case "input_json_delta" when slot.ToolCall is not null && slot.JsonArguments is not null:
                         {
                             var jsonDelta = JsonStr(delta, "partial_json") ?? "";
-                            slot.JsonArguments.Append(jsonDelta);
+                            // pi anthropic-messages.ts:795：append 的 partial 参数回填块，partial 消息可见。
+                            slot.ToolCall.Arguments = slot.JsonArguments.Append(jsonDelta);
                             stream.Push(new AssistantMessageEvent.ToolCallDelta(
                                 slot.ContentIndex, jsonDelta, output.Snapshot(blocks)));
                             break;
@@ -706,17 +707,11 @@ public static class AnthropicMessages
                     else if (slot.ToolCall is not null && slot.JsonArguments is not null)
                     {
                         var block = slot.ToolCall;
-                        try
-                        {
-                            block.Arguments = slot.JsonArguments.Finish();
-                        }
-                        catch (JsonException argumentsError)
-                        {
-                            // pi parseToolCallArguments：非法参数 JSON 不失败流，落 argumentsError。
-                            block.Arguments = new JsonObject();
-                            block.ArgumentsError =
-                                $"{argumentsError.Message}\n\nReceived arguments:\n{slot.JsonArguments.Text}";
-                        }
+                        // pi anthropic-messages.ts:830 Object.assign(block, arguments.finish())：
+                        // 非法参数 JSON 不失败流，落 argumentsError（pi parseToolCallArguments）。
+                        var (arguments, argumentsError) = slot.JsonArguments.Finish();
+                        block.Arguments = arguments;
+                        block.ArgumentsError = argumentsError;
 
                         stream.Push(new AssistantMessageEvent.ToolCallEnd(
                             slot.ContentIndex, block.ToToolCall(), output.Snapshot(blocks)));

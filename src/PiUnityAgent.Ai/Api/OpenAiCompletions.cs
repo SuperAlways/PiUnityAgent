@@ -444,17 +444,10 @@ public static class OpenAiCompletions
                         }
                         else
                         {
-                            // pi parseToolCallArguments：非法 JSON 不失败流，落 argumentsError。
-                            try
-                            {
-                                toolCall.Arguments = input.Arguments!.Finish();
-                            }
-                            catch (JsonException argumentsError)
-                            {
-                                toolCall.Arguments = new JsonObject();
-                                toolCall.ArgumentsError =
-                                    $"{argumentsError.Message}\n\nReceived arguments:\n{input.Arguments!.Text}";
-                            }
+                            // pi：Object.assign(block, arguments.finish())；非法 JSON 不失败流，落 argumentsError。
+                            var (args, argsError) = input.Arguments!.Finish();
+                            toolCall.Arguments = args;
+                            toolCall.ArgumentsError = argsError;
                         }
 
                         stream.Push(new AssistantMessageEvent.ToolCallEnd(
@@ -599,7 +592,8 @@ public static class OpenAiCompletions
                             && input.Kind == ToolCallInputKind.Json)
                         {
                             toolDelta = argumentsDelta;
-                            input.Arguments!.Append(argumentsDelta);
+                            // pi openai-completions.ts:655：append 的 partial 参数回填块，partial 消息可见。
+                            block.Arguments = input.Arguments!.Append(argumentsDelta);
                         }
                         else if (JsonStr(custom, "input") is { Length: > 0 } inputDelta
                                  && input.Kind == ToolCallInputKind.Custom)

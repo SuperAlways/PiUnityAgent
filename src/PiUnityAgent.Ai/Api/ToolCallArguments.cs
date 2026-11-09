@@ -1,51 +1,41 @@
-using System;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PiUnityAgent.Ai.Utils;
 
 namespace PiUnityAgent.Ai.Api;
 
 /// <summary>
-/// 一条流式 tool call 的参数累积器（pi <c>ToolCallArgumentsStream</c> 的最小端口）。
-/// 保存原始文本，不解析中间片段——未完成 JSON 绝不暴露给 partial 事件；
-/// 完整文本只在这条 tool call 结束时用 <see cref="Finish"/> 解析一次。
+/// 一条流式 tool call 的参数累积器（pi <c>ToolCallArgumentsStream</c>）：
+/// delta 期间暴露可解析的部分 JSON 快照；终点用一次 repair 解析给出终值/argumentsError。
+/// 原始文本不进入 partial 消息或 transcript。
 /// </summary>
-/// TODO(S7, D16): delta 期间暴露可解析的部分 JSON（pi streaming-json.ts）；当前仅终点严格解析。
 internal sealed class ToolCallArguments
 {
-    private readonly StringBuilder _text = new();
+    private readonly ToolCallArgumentsStream _stream = new();
 
-    /// <summary>追加一段参数文本（function.arguments 增量）。</summary>
-    public void Append(string delta) => _text.Append(delta);
+    public string Text => _stream.Text;
 
-    /// <summary>累积到的原始文本。</summary>
-    public string Text => _text.ToString();
+    /// <summary>追加一段参数文本；返回 partial 参数（对象形态；非对象快照显示为 {}）。</summary>
+    public JsonObject Append(string delta) => ToObject(_stream.Append(delta));
 
     /// <summary>
-    /// 解析完整参数文本。<c>JsonNode.Parse</c> 失败或结果不是 JSON object 时抛
-    /// <see cref="JsonException"/>，由协议适配器转为终态 Error（pi 对应 argumentsError）。
+    /// 接受 provider 的完整参数文本（pi <c>ToolCallArgumentsStream.replace</c>，utils/streaming-json.ts）：
+    /// 文本接续已累积文本时返回缺失片段，否则重置重新累积（delta 为 null）。两种情形都返回 partial 参数。
     /// </summary>
-    public JsonObject Finish()
+    public (string? Delta, JsonObject Arguments) Replace(string text)
     {
-        var json = _text.ToString();
-        if (string.IsNullOrWhiteSpace(json)) return new JsonObject();
-
-        JsonNode? parsed;
-        try
-        {
-            parsed = JsonNode.Parse(json);
-        }
-        catch (JsonException error)
-        {
-            // STJ 抛的是 JsonReaderException（子类）；统一成 JsonException 让适配器按一类接。
-            throw new JsonException($"Invalid tool call arguments: {error.Message}", error);
-        }
-
-        if (parsed is not JsonObject obj)
-        {
-            throw new JsonException("Tool arguments must be a JSON object");
-        }
-
-        return obj;
+        var (delta, arguments) = _stream.Replace(text);
+        return (delta, ToObject(arguments));
     }
+
+    /// <summary>终点：parseJsonWithRepair 语义，返回参数或 argumentsError。</summary>
+    public (JsonObject Arguments, string? ArgumentsError) Finish() => _stream.Finish();
+
+    /// <summary>
+    /// 解析器产出的 partial 值图（null/bool/string/double/List/Dictionary）整体转成 JsonObject；
+    /// 非对象快照（不该出现在工具参数上）显示为 {}。每次都新建节点：块上换引用即可让
+    /// 之前的 partial 消息快照保持不变。
+    /// </summary>
+    private static JsonObject ToObject(IReadOnlyDictionary<string, object?> partial)
+        => JsonSerializer.SerializeToNode(partial) as JsonObject ?? new JsonObject();
 }
