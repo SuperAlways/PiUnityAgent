@@ -35,8 +35,20 @@ public abstract record DeferredRequest
     {
     }
 
-    public sealed record Enabled(string? Window = null) : DeferredRequest
+    public sealed record Enabled : DeferredRequest
     {
+        /// <summary>延迟窗口；null / "15m" / "1h" / "24h"（pi TS 类型约束，C# 构造时校验）。</summary>
+        public string? Window { get; init; }
+
+        public Enabled(string? window = null)
+        {
+            if (window is not null && window is not ("15m" or "1h" or "24h"))
+            {
+                throw new ArgumentException(
+                    $"Unknown deferred window: {window}. Expected 15m, 1h, or 24h.");
+            }
+            Window = window;
+        }
     }
 }
 
