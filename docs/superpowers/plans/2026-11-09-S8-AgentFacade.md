@@ -2502,7 +2502,13 @@ public sealed partial class Models
         return LazyStream.Run(model, async () =>
         {
             var provider = RequireProvider(model.Provider);
-            if (provider is not IDeferredProvider deferred || !deferred.SupportsFetchDeferred)
+            if (provider is not IDeferredProvider deferred)
+            {
+                throw new ModelsError(
+                    ModelsErrorCode.Provider,
+                    $"Provider {model.Provider} does not support deferred responses");
+            }
+            if (!deferred.SupportsFetchDeferred)
             {
                 throw new ModelsError(
                     ModelsErrorCode.Provider,
@@ -2535,7 +2541,13 @@ public sealed partial class Models
         DeferredCancelOptions? options = null)
     {
         var provider = RequireProvider(model.Provider);
-        if (provider is not IDeferredProvider deferred || !deferred.SupportsCancelDeferred)
+        if (provider is not IDeferredProvider deferred)
+        {
+            throw new ModelsError(
+                ModelsErrorCode.Provider,
+                $"Provider {model.Provider} does not support deferred responses");
+        }
+        if (!deferred.SupportsCancelDeferred)
         {
             throw new ModelsError(
                 ModelsErrorCode.Provider,
