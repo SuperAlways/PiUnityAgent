@@ -17,7 +17,7 @@ namespace PiUnityAgent.Core.Agent;
 /// </summary>
 public static partial class ToolExecution
 {
-    public sealed record ExecutedToolCallBatch(List<ToolResultMessage> Messages, bool Terminate);
+    internal sealed record ExecutedToolCallBatch(List<ToolResultMessage> Messages, bool Terminate);
 
     /// <summary>
     /// 按配置的模式分发执行。
@@ -44,19 +44,25 @@ public static partial class ToolExecution
     /// <c>beforeToolCall</c>、执行、<c>afterToolCall</c>。对应 TS <c>runToolCall</c>
     /// （agent-loop.ts）。不发事件、不加消息——供「工具再调工具」（ctx.executeTool）使用，
     /// 使钩子（如权限检查）对那些调用同样生效。
-    /// <para>工具失败永不抛错：未知工具、参数错误、被阻断、执行抛异常都以
-    /// <c>IsError = true</c> 返回。<paramref name="onUpdate"/> 的流式部分结果直接转发给调用方
+    /// <para><paramref name="tools"/> 是调用解析所针对的工具集，独立于
+    /// <paramref name="context"/>.Tools（pi <c>RunToolCallOptions.tools</c> 必填、独立于
+    /// <c>context.tools</c>）——调用方可针对与 context 不同的工具集解析调用。
+    /// 工具失败永不抛错：未知工具、参数错误、被阻断、执行抛异常（含取消的
+    /// <c>OperationCanceledException</c>）都以 <c>IsError = true</c> 返回。
+    /// <paramref name="onUpdate"/> 的流式部分结果直接转发给调用方
     /// （TS 同款：runToolCall 不产生事件，onUpdate 由调用方决定去向）。</para>
     /// </summary>
     public static async Task<AgentToolCallOutcome> RunToolCallAsync(
         ToolCall toolCall,
+        IReadOnlyList<AgentTool> tools,
         AssistantMessage assistantMessage,
         AgentContext context,
         AgentLoopConfig config,
         CancellationToken signal,
         AgentToolUpdateCallback? onUpdate = null)
     {
-        var prepared = await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false);
+        var prepared = await PrepareToolCall(tools, context, assistantMessage, toolCall, config, signal)
+            .ConfigureAwait(false);
         if (prepared is PreparedCall.Blocked blocked)
         {
             return new AgentToolCallOutcome(toolCall, blocked.Result, blocked.Result.IsError);
@@ -136,7 +142,9 @@ public static partial class ToolExecution
         AgentEventSink emit)
     {
         await emit(new AgentEvent.ToolExecutionStart(toolCall.Id, toolCall.Name, toolCall.Arguments)).ConfigureAwait(false);
-        var prepared = await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false);
+        var prepared = await PrepareToolCall(
+            context.Tools ?? Array.Empty<AgentTool>(), context, assistantMessage, toolCall, config, signal)
+            .ConfigureAwait(false);
         return prepared switch
         {
             PreparedCall.Blocked blocked => new AgentToolCallOutcome(toolCall, blocked.Result, blocked.Result.IsError),
@@ -168,7 +176,9 @@ public static partial class ToolExecution
         foreach (var toolCall in toolCalls)
         {
             await emit(new AgentEvent.ToolExecutionStart(toolCall.Id, toolCall.Name, toolCall.Arguments)).ConfigureAwait(false);
-            var prepared = await PrepareToolCall(context, assistantMessage, toolCall, config, signal).ConfigureAwait(false);
+            var prepared = await PrepareToolCall(
+                context.Tools ?? Array.Empty<AgentTool>(), context, assistantMessage, toolCall, config, signal)
+                .ConfigureAwait(false);
             if (prepared is PreparedCall.Blocked blocked)
             {
                 var immediate = new AgentToolCallOutcome(blocked.ToolCall, blocked.Result, blocked.Result.IsError);
@@ -218,7 +228,8 @@ public static partial class ToolExecution
         {
             var finished = await Task.WhenAny(pendingTasks.ToArray()).ConfigureAwait(false);
             pendingTasks.Remove(finished);
-            // await 解包原异常（含 OperationCanceledException），保持中止沿取消路径传播。
+            // await 解包原异常：工具执行/终结的抛错已 catch-all 为错误结果（含 OCE），
+            // 此处仅剩事件汇/基础设施异常沿原样传播。
             var (index, outcome) = await finished.ConfigureAwait(false);
             completed[index] = outcome;
             await emit(new AgentEvent.ToolExecutionEnd(
@@ -258,19 +269,20 @@ public static partial class ToolExecution
         => new(toolCall, AgentToolResult.FromError("Operation aborted"), false);
 
     /// <summary>
-    /// 预检：查找工具 → prepareArguments 垫片 → Schema 校验 → beforeToolCall（可阻断）→ 取消探测。
-    /// 对应 TS prepareToolCall（agent-loop.ts:727-787）：垫片/校验/钩子抛错一律立即以
-    /// 原始错误消息终结（不执行）；钩子返回后与返回 ready 前各探测一次取消，
-    /// 中止产出 "Operation aborted"（不执行）。
+    /// 预检：在 <paramref name="tools"/> 中查找工具 → prepareArguments 垫片 → Schema 校验 →
+    /// beforeToolCall（可阻断）→ 取消探测。对应 TS prepareToolCall（agent-loop.ts:727-787）：
+    /// 垫片/校验/钩子抛错一律立即以原始错误消息终结（不执行）；钩子返回后与返回 ready 前
+    /// 各探测一次取消，中止产出 "Operation aborted"（不执行）。
     /// </summary>
     private static async Task<PreparedCall> PrepareToolCall(
+        IReadOnlyList<AgentTool> tools,
         AgentContext context,
         AssistantMessage assistantMessage,
         ToolCall toolCall,
         AgentLoopConfig config,
         CancellationToken signal)
     {
-        var tool = (context.Tools ?? Array.Empty<AgentTool>()).FirstOrDefault(t => t.Name == toolCall.Name);
+        var tool = tools.FirstOrDefault(t => t.Name == toolCall.Name);
         if (tool is null)
             return new PreparedCall.Blocked(toolCall, AgentToolResult.FromError($"Tool {toolCall.Name} not found"), false);
 
@@ -298,7 +310,8 @@ public static partial class ToolExecution
                     return AbortedCall(toolCall);
                 if (decision?.Block == true)
                 {
-                    var reason = decision.Reason ?? "Tool execution was blocked";
+                    // pi `beforeResult.reason || "Tool execution was blocked"`：空串同 null 回退默认文案。
+                    var reason = string.IsNullOrEmpty(decision.Reason) ? "Tool execution was blocked" : decision.Reason;
                     // TS 把 terminate 写在错误结果本体上（result.terminate = true），否则
                     // blocked 分支构造 outcome 时会把它丢掉。AgentToolResult.Terminate 是
                     // init-only，用 with 落到结果上；Blocked 记录同时保留该旗标。
@@ -313,14 +326,11 @@ public static partial class ToolExecution
 
             return new PreparedCall.Ready(toolCall, tool, args);
         }
-        catch (OperationCanceledException)
-        {
-            // 中止沿取消路径传播（由上层运行决定退出方式）；与 ExecutePrepared 的取消姿态一致。
-            throw;
-        }
         catch (Exception error)
         {
-            // TS prepareToolCall：垫片/校验/钩子抛错一律立即终结，错误消息原样给模型。
+            // TS prepareToolCall catch-all：垫片/校验/钩子抛错一律立即终结，错误消息原样给模型。
+            // 取消（OperationCanceledException）同样落错误结果——不沿管线 rethrow（那会让取消
+            // 变成 stream.Fail，丢掉 turn_end/agent_end 与批内已完成结果；pi 无此路径）。
             return new PreparedCall.Blocked(toolCall, AgentToolResult.FromError(error.Message), false);
         }
     }
@@ -356,8 +366,11 @@ public static partial class ToolExecution
     /// 执行已预检的工具调用。对应 TS <c>executePreparedToolCall</c>：
     /// onUpdate 收集为待办并在 execute 结算后统一等待；结算（含失败/取消）之后到达的
     /// 部分结果被 <c>acceptingUpdates</c> 丢弃；耗时在 execute 结算时即测得、先于等待
-    /// 待办更新（TS 856 顺序）。netstandard2.1 无 <c>Stopwatch.GetElapsedTime</c>
-    /// （.NET 7+），以 <c>Stopwatch</c> 实例等价计时。
+    /// 待办更新（TS 856 顺序）。抛错（含 <c>OperationCanceledException</c>）走 pi 的
+    /// catch-all：一律落 <c>IsError</c> 结果，耗时保留、待办更新仍等待——取消不沿管线
+    /// rethrow（TS 无此路径；C# 遵守 CT 的工具抛 OCE 也应是模型可见的工具失败）。
+    /// netstandard2.1 无 <c>Stopwatch.GetElapsedTime</c>（.NET 7+），以 <c>Stopwatch</c>
+    /// 实例等价计时。
     /// </summary>
     private static async Task<ExecutedToolResult> ExecutePrepared(
         PreparedCall.Ready prepared,
@@ -388,16 +401,11 @@ public static partial class ToolExecution
             await AwaitUpdates(updateEvents, updateEventsLock).ConfigureAwait(false);
             return new ExecutedToolResult(result, durationMs);
         }
-        catch (OperationCanceledException)
-        {
-            // 中止沿取消路径传播（由上层运行决定退出方式）；已入队的更新仍等待结束。
-            acceptingUpdates = false;
-            await AwaitUpdates(updateEvents, updateEventsLock).ConfigureAwait(false);
-            throw;
-        }
         catch (Exception error)
         {
             // 抛出的错误视为失败结果（模型可见文本，UI 可读异常）；耗时先于等待更新测得（TS 856）。
+            // OperationCanceledException 同样走此路径（pi catch-all）：取消是工具失败而非管线异常，
+            // 中止路径由显式探测产出 "Operation aborted"（见 PrepareToolCall / 并行 thunk）。
             var durationMs = Elapsed();
             acceptingUpdates = false;
             await AwaitUpdates(updateEvents, updateEventsLock).ConfigureAwait(false);

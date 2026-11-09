@@ -49,16 +49,29 @@ public class ToolExecutionTests
     public async Task Unknown_Tool_Is_An_Error_Outcome()
     {
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call("nope"), Assistant(), Context(), Config(), CancellationToken.None);
+            Call("nope"), Array.Empty<AgentTool>(), Assistant(), Context(), Config(), CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.Equal("Tool nope not found", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
     }
 
     [Fact]
+    public async Task Tools_Are_Caller_Provided_Independent_Of_Context_Tools()
+    {
+        // pi RunToolCallOptions.tools 独立必填：解析针对调用方传入的 tools，而非 context.Tools
+        // （2026-11-09 审计 U-1）。context.Tools 为空也能执行调用方给出的工具。
+        var tool = Echo();
+        var outcome = await ToolExecution.RunToolCallAsync(
+            Call(), new[] { tool }, Assistant(), Context(), Config(), CancellationToken.None);
+        Assert.True(outcome.IsError == false);
+        Assert.Equal("hi", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
+    }
+
+    [Fact]
     public async Task Validation_Error_Is_An_Error_Outcome()
     {
+        var tool = Echo();
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(args: new JsonObject()), Assistant(), Context(Echo()), Config(), CancellationToken.None);
+            Call(args: new JsonObject()), new[] { tool }, Assistant(), Context(tool), Config(), CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.Contains("Validation failed for tool \"echo\"",
             Assert.IsType<TextContent>(outcome.Result.Content[0]).Text, StringComparison.Ordinal);
@@ -72,11 +85,28 @@ public class ToolExecutionTests
             BeforeToolCall = (_, _) => Task.FromResult<BeforeToolCallResult?>(
                 new BeforeToolCallResult(Block: true, Reason: "denied", Terminate: true)),
         };
+        var tool = Echo();
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(), Assistant(), Context(Echo()), config, CancellationToken.None);
+            Call(), new[] { tool }, Assistant(), Context(tool), config, CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.True(outcome.Result.Terminate);
         Assert.Equal("denied", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Before_Hook_Block_Empty_Reason_Falls_Back_To_Default()
+    {
+        // pi `beforeResult.reason || "Tool execution was blocked"`：空串同 null 回退默认文案。
+        var config = Config() with
+        {
+            BeforeToolCall = (_, _) => Task.FromResult<BeforeToolCallResult?>(
+                new BeforeToolCallResult(Block: true, Reason: "", Terminate: false)),
+        };
+        var tool = Echo();
+        var outcome = await ToolExecution.RunToolCallAsync(
+            Call(), new[] { tool }, Assistant(), Context(tool), config, CancellationToken.None);
+        Assert.True(outcome.IsError);
+        Assert.Equal("Tool execution was blocked", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
     }
 
     [Fact]
@@ -95,7 +125,7 @@ public class ToolExecutionTests
             StructuredContent = new JsonObject { ["x"] = 1 },
         });
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(), Assistant(), Context(tool), config, CancellationToken.None);
+            Call(), new[] { tool }, Assistant(), Context(tool), config, CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.Equal("override", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
         Assert.Null(outcome.Result.StructuredContent);
@@ -108,10 +138,26 @@ public class ToolExecutionTests
         {
             BeforeToolCall = (_, _) => throw new InvalidOperationException("hook boom"),
         };
+        var tool = Echo();
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(), Assistant(), Context(Echo()), config, CancellationToken.None);
+            Call(), new[] { tool }, Assistant(), Context(tool), config, CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.Equal("hook boom", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
+    }
+
+    [Fact]
+    public async Task Before_Hook_Throwing_OCE_Becomes_Error_Outcome_Without_Throwing()
+    {
+        // pi catch-all：钩子抛出的取消（OCE）同普通钩子异常落错误结果，不沿管线抛出（审计 U-2）。
+        var config = Config() with
+        {
+            BeforeToolCall = (_, _) => throw new OperationCanceledException("hook canceled"),
+        };
+        var tool = Echo();
+        var outcome = await ToolExecution.RunToolCallAsync(
+            Call(), new[] { tool }, Assistant(), Context(tool), config, CancellationToken.None);
+        Assert.True(outcome.IsError);
+        Assert.Equal("hook canceled", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
     }
 
     [Fact]
@@ -122,9 +168,25 @@ public class ToolExecutionTests
             Execute = (_, _, _, _) => throw new InvalidOperationException("boom"),
         };
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(), Assistant(), Context(tool), Config(), CancellationToken.None);
+            Call(), new[] { tool }, Assistant(), Context(tool), Config(), CancellationToken.None);
         Assert.True(outcome.IsError);
         Assert.Equal("boom", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text);
+        Assert.NotNull(outcome.DurationMs);
+    }
+
+    [Fact]
+    public async Task Execute_Throwing_OCE_Becomes_Error_Outcome_Without_Throwing()
+    {
+        // pi executePreparedToolCall catch-all：遵守 CT 的工具抛 OCE 也落错误结果（含耗时），
+        // 不让取消把整次运行打成流失败（审计 U-2）。
+        var tool = Echo() with
+        {
+            Execute = (_, _, _, _) => throw new OperationCanceledException("canceled"),
+        };
+        var outcome = await ToolExecution.RunToolCallAsync(
+            Call(), new[] { tool }, Assistant(), Context(tool), Config(), CancellationToken.None);
+        Assert.True(outcome.IsError);
+        Assert.Contains("canceled", Assert.IsType<TextContent>(outcome.Result.Content[0]).Text, StringComparison.Ordinal);
         Assert.NotNull(outcome.DurationMs);
     }
 
@@ -142,7 +204,7 @@ public class ToolExecutionTests
         };
         // 直接调用 runToolCall 时 onUpdate 由调用方提供（不产生事件）；此处只断言正常返回。
         var outcome = await ToolExecution.RunToolCallAsync(
-            Call(), Assistant(), Context(tool), Config(), CancellationToken.None,
+            Call(), new[] { tool }, Assistant(), Context(tool), Config(), CancellationToken.None,
             partial => { updates.Add("update"); return Task.CompletedTask; });
         Assert.True(outcome.IsError == false);
         Assert.Single(updates);

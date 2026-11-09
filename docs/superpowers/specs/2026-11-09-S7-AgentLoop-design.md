@@ -435,7 +435,7 @@ public static class DefaultStreamFn
 | 工具装载 diff | Ai `getToolStateChanges/toToolDeclaration` 公开 | 同（AgentLoop 内部实现） | Core internal `ToolLoadout`（D11/S9 仍持公开重放辅助） | D/C | 避免 S7 提前扩 Ai 公共面；代价=S9 需提升/迁移内部实现 |
 | JSON 声明相等 | `JSON.stringify` 串比较 | 同 | 规范化 JSON 比较 | B | 无 JS 串化语义依赖；代价=需稳定键序 |
 | hooks 归属 | AgentLoopConfig 内置 before/after | 同 | S7 落钩子类型与调用点；S8 只做 Agent 门面注册/队列 | D/scope | 路线图 S8 的 before/after 指门面层；循环调用点必须随执行管线一起落，否则 runToolCall 形状断裂 |
-| `runToolCall` 参数 | options 对象 | 位置参数 | 位置参数 | B | C# 无对象字面量；签名含 hooks/onUpdate |
+| `runToolCall` 参数 | options 对象 | 位置参数 | 位置参数；`tools` 为独立必填参数（=pi `RunToolCallOptions.tools`，独立于 `context.tools`） | B | C# 无对象字面量；签名含 hooks/onUpdate；tools 独立性系 2026-11-09 审计 U-1 修复，修复后与 pi 无此偏离 |
 | Error 类型 | `Error` | InvalidOperationException | InvalidOperationException | B | 文案逐字；类型 C# 化 |
 | Agent 流失败收场 | `.then(end)`（run reject 时流悬挂） | `PumpAsync` catch→Fail | `stream.Fail(error)` | D/B | 避免消费者悬挂；代价=与 pi 字面不同（pi 契约要求回调不抛） |
 | `DefaultStreamFn` | 模块级可变单例 | 同 | 同（静态 Set/Get/IsConfigured） | B | 宿主注入缝；代价=进程级共享 |
@@ -445,6 +445,10 @@ public static class DefaultStreamFn
 | D16 流式解析引擎 | pi streaming-json/json-parse | pi.net 已移植 | 移植 pi.net internal + 适配器接线 | B | 与 pi 行为差分锁快照/文案；代价=适配器三处修改 |
 | proxy.ts | 服务端代理流 | 已移植 | 不做 | C/D22 | server RPC 路线非 S7；登记后续扩展；代价=代理模式需另立项 |
 | 事件快照 | `{...partialMessage}` 浅拷贝 | 记录不可变 | 记录 `with` 快照 | A/B | C# record 不可变；无别名风险 |
+| PollAsync 吞异常 | `getSteeringMessages` 抛错即 reject runAgentLoop（`.then(end)` 模式下流悬挂） | 同吞（AgentLoopRunner） | 回调抛错→捕获返回空列表继续 | D | pi.net 硬化；代价=钩子异常被静默降级为空轮询（2026-11-09 审计 U-3 登记） |
+| 非有限数值 partial 快照 | 快照直持 Infinity/NaN（JS Number） | — | `SerializeToNode` 抛 `ArgumentException`→catch 降级为空对象 | D/低 | C# JsonNode 不承载非有限数值；代价=partial 期间该字段缺省，终点 repair 同受限于 JsonNode（审计 U-4 登记） |
+| prepareArguments 非对象返回 | 非对象交 schema 校验（校验语义报错） | 直传 object（无强转） | `(JsonObject)` 强转→InvalidCastException 消息进错误结果 | D/低 | 局部小改未做；代价=极端入参下错误文案不同（仍为 isError 结果、不执行）（审计 U-8 登记） |
+| QueueMode/双队列排空模式 | `types.ts:47-55` `"all"/"one-at-a-time"` 公共类型 + 排空点注入 | 无 | 无对应类型 | scope | 队列存储归 S8（§1.2 非目标），非后置裁剪；S8 plan 须显式承接该形状，否则成 shape gap（审计 U-9 登记） |
 
 ---
 

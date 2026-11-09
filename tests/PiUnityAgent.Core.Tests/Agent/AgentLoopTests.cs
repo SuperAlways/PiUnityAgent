@@ -563,6 +563,41 @@ public class AgentLoopTests
         Assert.Single(events.OfType<AgentEvent.AgentEnd>());
     }
 
+    // ---------- 工具抛取消 = 错误结果而非流失败（审计 U-2，pi catch-all 语义） ----------
+
+    [Fact]
+    public async Task Tool_Throwing_OCE_Yields_Error_Result_And_Loop_Completes()
+    {
+        // 工具遵守 CT 惯用法抛 OperationCanceledException（令牌本身未取消）：pi 把它当
+        // 普通工具失败落 isError 结果，循环继续下一请求并正常发出 turn_end/agent_end；
+        // 而不是 stream.Fail 中断消费者。
+        var oceTool = EchoTool() with
+        {
+            Execute = (_, _, _, _) => throw new OperationCanceledException("canceled"),
+        };
+        var faux = FauxProviderWith(
+            new FauxResponseStep.Response(Faux.AssistantMessage(
+                new ContentBlock[] { Faux.ToolCall("echo", new JsonObject { ["value"] = "hi" }) },
+                StopReason.ToolUse)),
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("done"))));
+        var stream = AgentLoop.Loop(
+            new Message[] { UserPrompt("use the tool") },
+            new AgentContext { Messages = new List<Message>(), Tools = new[] { oceTool } },
+            Config(faux.GetModel()),
+            CancellationToken.None,
+            faux.Provider.Stream);
+        var events = await CollectAsync(stream);
+        var result = await stream.WaitForResultAsync();
+
+        var end = Assert.IsType<AgentEvent.ToolExecutionEnd>(events.Single(e => e is AgentEvent.ToolExecutionEnd));
+        Assert.True(end.IsError);
+        Assert.Contains("canceled", Assert.IsType<TextContent>(end.Result.Content[0]).Text, StringComparison.Ordinal);
+        Assert.Equal(2, events.Count(e => e is AgentEvent.TurnEnd));
+        Assert.Single(events.OfType<AgentEvent.AgentEnd>());
+        Assert.Equal("done", Assert.IsType<TextContent>(Assert.IsType<AssistantMessage>(result[^1]).Content[0]).Text);
+        Assert.Equal(2, faux.State.CallCount);
+    }
+
     // ---------- DefaultStreamFn ----------
 
     [Fact]
@@ -572,7 +607,7 @@ public class AgentLoopTests
         Assert.False(DefaultStreamFn.IsConfigured);
         var error = Assert.Throws<InvalidOperationException>(() => DefaultStreamFn.Get());
         Assert.Equal(
-            "No default stream function configured. Pass streamFn explicitly or call DefaultStreamFn.Set().",
+            "No default stream function configured. Pass streamFn explicitly or call setDefaultStreamFn().",
             error.Message);
     }
 

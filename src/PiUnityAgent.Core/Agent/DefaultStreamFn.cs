@@ -15,11 +15,11 @@ public static class DefaultStreamFn
     /// <summary>设置（或清除）默认流式函数。</summary>
     public static void Set(StreamFn? streamFn) => _default = streamFn;
 
-    /// <summary>取默认流式函数；未配置时抛出（要求显式传入 streamFn）。</summary>
+    /// <summary>取默认流式函数；未配置时抛出（要求显式传入 streamFn）。文案逐字同 pi stream-fn.ts。</summary>
     public static StreamFn Get()
         => _default
            ?? throw new InvalidOperationException(
-               "No default stream function configured. Pass streamFn explicitly or call DefaultStreamFn.Set().");
+               "No default stream function configured. Pass streamFn explicitly or call setDefaultStreamFn().");
 
     /// <summary>是否已配置默认流式函数。</summary>
     public static bool IsConfigured => _default is not null;
