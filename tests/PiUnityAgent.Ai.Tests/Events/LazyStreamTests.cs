@@ -213,7 +213,11 @@ public class LazyStreamTests
     {
         var model = CreateModel();
         var results = new List<AssistantMessage?>();
-        var observer = new RecordingObserver(new List<AssistantMessageEvent>(), results);
+        // OnResult 在 outer.End 之后才被调（LazyStream.ForwardAsync），WaitForDoneAsync/流迭代
+        // 可能先于 results 追加恢复执行；用完成信号等 OnResult 真正落笔再断言（RunContinuationsAsynchronously
+        // 防止信号线程内联跑等待方的续体）。
+        var resultSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observer = new RecordingObserver(new List<AssistantMessageEvent>(), results, resultSignal);
 
         var stream = LazyStream.Run(model, () =>
             Task.FromResult<IAssistantMessageEventStream>(DoneSource(model)), observer);
@@ -221,6 +225,7 @@ public class LazyStreamTests
 
         // 消费完流再等结果，OnResult 仍只发生一次（End 后置，不随消费次数重复）。
         await foreach (var _ in stream) { }
+        await resultSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Same(done, results.Single());
     }
 
@@ -228,12 +233,22 @@ public class LazyStreamTests
     {
         private readonly List<AssistantMessageEvent> _events;
         private readonly List<AssistantMessage?> _results;
-        public RecordingObserver(List<AssistantMessageEvent> events, List<AssistantMessage?> results)
+        private readonly TaskCompletionSource<bool>? _resultSignal;
+        public RecordingObserver(
+            List<AssistantMessageEvent> events,
+            List<AssistantMessage?> results,
+            TaskCompletionSource<bool>? resultSignal = null)
         {
             _events = events;
             _results = results;
+            _resultSignal = resultSignal;
         }
         public void OnEvent(AssistantMessageEvent @event) => _events.Add(@event);
-        public void OnResult(AssistantMessage? result) => _results.Add(result);
+        public void OnResult(AssistantMessage? result)
+        {
+            // 先落笔再放行信号：等待方恢复时 results 必已包含该次结果。
+            _results.Add(result);
+            _resultSignal?.TrySetResult(true);
+        }
     }
 }
