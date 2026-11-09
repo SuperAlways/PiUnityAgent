@@ -34,14 +34,14 @@
 | `packages/ai/src/types.ts` | `src/PiUnityAgent.Ai/Types/*.cs` | ✅ | S1 消息/内容类型、S2 事件、S3 Model/选项均已落地；S3 返工 v2 补 `FetchFunction` 端口与形状对齐；v3 补 `StreamOptions.TransformHeaders/OnPayload`、`ClientIdentity`（UserAgentMode/Attribution/Version）、`ImagesOptions`/`ClassifierOptions`，删 `StreamOptions.BaseUrl/StopSequences` |
 | `packages/ai/src/utils/event-stream.ts` | `src/PiUnityAgent.Ai/Events/*` | ✅ | S2 完成：12 事件 + EventStream + AssistantMessageEventStream；单消费者 |
 | `packages/ai/src/utils/transcript.ts` | `src/PiUnityAgent.Ai/Types/TranscriptNormalization.cs` | ✅ | `normalizeContext` 折叠 system prompt/tools；重放辅助 D11 后置 |
-| `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Reliability/Retry.cs` | ⬜ | 指数退避 + 抖动 |
+| `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Utils/Retry.cs` | ✅ | S8/D17：助手轮次重试（错误分类/指数退避/回调/取消）；pi 的 agent-core 不消费，调用方 2A |
 | `packages/ai/src/utils/estimate.ts` | `src/PiUnityAgent.Ai/Tokens/Estimate.cs` | ⬜ | 粗略 token 估算 |
 | `packages/ai/src/utils/abort.ts` | `src/PiUnityAgent.Ai/Reliability/Abort.cs` | ⬜ | 优先用 `CancellationToken` |
 | `packages/ai/src/types.ts`（`fetch?`） | `src/PiUnityAgent.Ai/Types/Fetch.cs` | ✅ | S3 返工 v2：自有 `FetchFunction` 端口（B 方案）；Host 适配器在 S13/S4 |
 | `packages/ai/src/api/openai-completions.ts` | `src/PiUnityAgent.Ai/Api/OpenAiCompletions.cs` | ⬜ | OpenAI-compatible / DeepSeek |
 | `packages/ai/src/api/anthropic-messages.ts` | `src/PiUnityAgent.Ai/Api/AnthropicMessages.cs` | ⬜ | 保留 cache/thinking 语义 |
-| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；Deferred 行为 D3 后置 |
-| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | ✅ | S3 v3：门面形状补齐（ModelsError/FilterAllModels/transformHeaders/observer 挂点/CreateModelsOptions）+ API Key 认证/可用性路径；刷新 D2、Deferred D3、图片 D4、分类 D5 后置（C） |
+| `packages/ai/src/providers/faux.ts` | `src/PiUnityAgent.Ai/Providers/Faux/*` | ✅ | S3 Faux：脚本队列/确定性分块；Deferred 行为 S8/D3 已完成（见 3C） |
+| `packages/ai/src/models.ts` | `src/PiUnityAgent.Ai/Providers/Models.cs` | ✅ | S3 v3：门面形状补齐（ModelsError/FilterAllModels/transformHeaders/observer 挂点/CreateModelsOptions）+ API Key 认证/可用性路径；刷新 D2（S4）与 Deferred D3（S8）已完成；图片 D4、分类 D5 后置（C） |
 | `packages/ai/src/index.ts` | — | ⛔ | C# 不建 barrel |
 | `packages/ai/src/auth/**`、`oauth*.ts` | `src/PiUnityAgent.Ai/Providers/Auth/` | ✅ | S3 v3 形状：ModelAuth/AuthResult（ModelAuth+Env+Source）/AuthCheck（Type 必填）/CredentialStore（Read/List/Modify/Delete；modify null=不变）/IAuthContext/ApiKeyAuth/OAuthAuth（ToAuth，无 Logout）；OAuth 行为 C 后置 D1/D7 |
 | `packages/ai/src/images*`、`classify*` | `src/PiUnityAgent.Ai/Types/ImagesTypes.cs`、`ClassifierTypes.cs`、`Providers/ProviderCapabilities.cs`、`Providers/ProviderStreams.cs` | 🟡 | 类型 + 能力接口（`IImagesProvider`/`IClassifierProvider`）+ `ProviderImages`/`ProviderClassifier` + `ImagesOptions`/`ClassifierOptions`；`Models` stub；真实实现 D4/D5 后置（C） |
@@ -101,6 +101,17 @@
 | `packages/agent/src/stream-fn.ts` | `src/PiUnityAgent.Core/Agent/DefaultStreamFn.cs` | ✅ S7 |
 | `packages/agent/src/proxy.ts` | —（D22） | 🟡 后续扩展 |
 | `packages/ai/src/utils/streaming-json.ts`、`json-parse.ts` | `src/PiUnityAgent.Ai/Utils/{StreamingJson,JsonParse}.cs` | ✅ S7/D16 |
+
+---
+
+## 3C. S8 Agent 门面补充映射（2026-11-09）
+
+| pi 源 | 我们的落点 | 状态 |
+|---|---|---|
+| `packages/agent/src/agent.ts` | `src/PiUnityAgent.Core/Agent/Agent.cs` + `Agent.Run.cs` + `Agent.Queues.cs` | ✅ S8 |
+| `packages/ai/src/utils/retry.ts` | `src/PiUnityAgent.Ai/Utils/Retry.cs` | ✅ S8/D17 |
+| `packages/ai/src/models.ts`（deferred 段） | `src/PiUnityAgent.Ai/Providers/Models.Capabilities.cs` | ✅ S8/D3 |
+| `packages/ai/src/providers/faux.ts`（deferred 段） | `src/PiUnityAgent.Ai/Providers/Faux/FauxProvider.cs` | ✅ S8/D3 |
 
 ---
 
