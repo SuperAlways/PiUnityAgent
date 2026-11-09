@@ -7,6 +7,8 @@
 > **前置**：S1 消息模型、S2 事件流已完成（`main` `cd2f15e`）。
 > **范围边界**：S3 只做 **模型描述、provider 注册表、StreamFn 契约、Faux provider**；**不做 HTTP/SSE、OAuth、图片/分类 provider、动态模型刷新**（S4/S5/后续）。
 
+> ⚠️ **已过期（2026-11-08 起）**：本 v0.1 的公共形状（`sealed record Provider`、单 delegate `StreamFn`、无 Auth 的 Faux、13 字段 `SimpleStreamOptions`）已被 v2/v3 全部推翻；实现与偏离判定一律以 [`2026-11-08-S3-v3-偏离补齐-design.md`](2026-11-08-S3-v3-偏离补齐-design.md) 为准（差异见其 §6）。
+
 ---
 
 ## 一、S3 在系统中的位置
@@ -94,7 +96,7 @@ public sealed record ModelCost(
     double CacheWrite = 0);
 ```
 
-### 3.3 与 pi 的差异
+### 3.3 与 pi 的差异（已被 v2/v3 推翻）
 
 - pi 的 `Model<TApi>` 用泛型约束 api；C# 用 string `Api`（运行时校验），避免泛型爆炸；
 - `Compat`（OpenAI/Anthropic 兼容参数）先不放进 `Model`，S4/S5 用 provider 配置/选项承载；
@@ -104,7 +106,7 @@ public sealed record ModelCost(
 
 ## 四、Provider 与 Models
 
-### 4.1 Provider
+### 4.1 Provider（已被 v3 `IProvider` 接口推翻）
 
 ```csharp
 public sealed record Provider(
@@ -118,7 +120,7 @@ public sealed record Provider(
 - `Stream` 是该 provider 的统一入口；
 - S3 不包含认证；Faux 是 keyless。
 
-### 4.2 StreamFn
+### 4.2 StreamFn（已被 v3 双 delegate 推翻）
 
 ```csharp
 public delegate Task<IAssistantMessageEventStream> StreamFn(

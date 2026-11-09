@@ -11,7 +11,7 @@ namespace PiUnityAgent.Ai.Providers.Auth;
 
 /// <summary>
 /// Anthropic OAuth 流（Claude Pro/Max）。对应 pi auth/oauth/anthropic.ts / pi.net AnthropicOAuth.cs。
-/// S5 只实现 copy-code/manual 分支——browser 分支依赖 loopback 回调服务器（spec §10 C 偏离，
+/// S5 只实现 copy-code/manual 分支——browser 分支依赖 loopback 回调服务器（spec §10.1 C/D20 偏离，
 /// 后置；选中即报 NotSupportedException）；token 交换走注入的 <see cref="FetchFunction"/>
 /// （B/D 偏离：pi 全局 fetch / pi.net HttpClient）。
 /// </summary>
