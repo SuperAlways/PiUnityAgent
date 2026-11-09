@@ -27,10 +27,10 @@ public static class ToolValidation
     /// <summary>校验并（必要时）强制转换参数（pi <c>validateToolArguments</c>）。</summary>
     public static JsonNode? ValidateToolArguments(Tool tool, ToolCall toolCall)
     {
-        if (!string.IsNullOrEmpty(toolCall.ArgumentsError))
+        if (toolCall.ArgumentsError is { Length: > 0 } argumentsError)
         {
             throw new InvalidOperationException(
-                $"Invalid arguments for tool \"{toolCall.Name}\": {toolCall.ArgumentsError}");
+                $"Invalid arguments for tool \"{toolCall.Name}\": {argumentsError}");
         }
 
         // 深拷贝：工具改自己的参数不污染 transcript 里的调用（pi structuredClone）。

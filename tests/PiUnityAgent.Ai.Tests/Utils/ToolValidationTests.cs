@@ -37,6 +37,15 @@ public class ToolValidationTests
     }
 
     [Fact]
+    public void Whitespace_ArgumentsError_Is_Still_Reported()
+    {
+        var tool = EchoTool(NumberSchema());
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ToolValidation.ValidateToolArguments(tool, Call("echo", new JsonObject(), " ")));
+        Assert.Equal("Invalid arguments for tool \"echo\":  ", error.Message);
+    }
+
+    [Fact]
     public void Numeric_String_Is_Coerced_To_Number()
     {
         var tool = EchoTool(NumberSchema());
