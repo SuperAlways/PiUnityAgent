@@ -15,7 +15,8 @@ namespace PiUnityAgent.Ai.Providers.Auth;
 /// D7 文件凭据存储：单个 JSON 文件持久化全部 provider 凭据。
 /// 文件形状固定：{"version":1,"credentials":{"&lt;providerId&gt;":{...}}}，
 /// api_key 条目 <c>{"type":"api_key","key":...,"env":{...}}</c>，
-/// oauth 条目 <c>{"type":"oauth","refresh":...,"access":...,"expires":...,"extra":{...}}</c>。
+/// oauth 条目 <c>{"type":"oauth","refresh":...,"access":...,"expires":...,"&lt;额外字段&gt;":...}</c>。
+/// 额外字段与 pi 一样平铺在条目顶层；旧版嵌套的 <c>"extra"</c> 对象读入时兼容合并。
 /// 内存语义与 <see cref="InMemoryCredentialStore"/> 完全一致（per-provider 串行 / null=不变），
 /// 叠加：构造时全量载入、修改成功后原子写回（temp + File.Replace/File.Move）。
 /// </summary>
@@ -259,17 +260,28 @@ public sealed class FileCredentialStore : CredentialStore
 
     private static IReadOnlyDictionary<string, JsonNode?>? ReadExtra(string providerId, JsonObject entry)
     {
-        if (!entry.TryGetPropertyValue("extra", out var extraNode) || extraNode is null) return null;
-        if (extraNode is not JsonObject extraObject)
-            throw new ModelsError(ModelsErrorCode.Auth, $"Credential entry '{providerId}' has a non-object 'extra'");
-
         var extra = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
-        foreach (var pair in extraObject)
+
+        // 旧版把未知字段嵌在 "extra"：读入时并进平铺结果，写出时不再产生该键。
+        if (entry.TryGetPropertyValue("extra", out var legacyNode) && legacyNode is not null)
         {
+            if (legacyNode is not JsonObject legacyObject)
+                throw new ModelsError(
+                    ModelsErrorCode.Auth, $"Credential entry '{providerId}' has a non-object 'extra'");
+            foreach (var pair in legacyObject) extra[pair.Key] = pair.Value?.DeepClone();
+        }
+
+        foreach (var pair in entry)
+        {
+            if (pair.Key == "extra" || IsOAuthReservedKey(pair.Key)) continue;
             extra[pair.Key] = pair.Value?.DeepClone();
         }
-        return extra;
+
+        return extra.Count == 0 ? null : extra;
     }
+
+    private static bool IsOAuthReservedKey(string key)
+        => key is "type" or "refresh" or "access" or "expires";
 
     // ---- 原子写回：temp 文件 + File.Replace/File.Move；失败清理 temp 并抛 ModelsError(Auth) ----
 
@@ -356,9 +368,11 @@ public sealed class FileCredentialStore : CredentialStore
                 };
                 if (oauth.Extra is not null)
                 {
-                    var extra = new JsonObject();
-                    foreach (var pair in oauth.Extra) extra[pair.Key] = pair.Value?.DeepClone();
-                    entry["extra"] = extra;
+                    foreach (var pair in oauth.Extra)
+                    {
+                        if (pair.Key == "extra" || IsOAuthReservedKey(pair.Key)) continue;
+                        entry[pair.Key] = pair.Value?.DeepClone();
+                    }
                 }
                 return entry;
             }

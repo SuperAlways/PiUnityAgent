@@ -19,6 +19,8 @@ public sealed record OAuthCredential : Credential
     public required string RefreshToken { get; init; }
     public required string AccessToken { get; init; }
     public required long ExpiresAt { get; init; }
+
+    /// <summary>pi OAuthCredentials 的 `[key: string]: unknown` 额外字段（内存表示）；落盘时与 pi 一样平铺在凭据条目顶层。</summary>
     public IReadOnlyDictionary<string, JsonNode?>? Extra { get; init; }
 }
 

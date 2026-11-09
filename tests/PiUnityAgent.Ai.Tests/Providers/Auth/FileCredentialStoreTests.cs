@@ -205,4 +205,76 @@ public sealed class FileCredentialStoreTests : IDisposable
         var reloaded = new FileCredentialStore(path);
         Assert.Equal("k1", Assert.IsType<ApiKeyCredential>(await reloaded.ReadAsync("p1")).Key);
     }
+
+    [Fact]
+    public async Task OAuth_Extra_Fields_Are_Flat_On_Wire()
+    {
+        var store = new FileCredentialStore(_path);
+        await store.ModifyAsync("github-copilot", _ => Task.FromResult<Credential?>(
+            new OAuthCredential
+            {
+                RefreshToken = "refresh-1",
+                AccessToken = "access-1",
+                ExpiresAt = 1760000000000L,
+                Extra = new Dictionary<string, JsonNode?> { ["enterpriseUrl"] = "company.ghe.com" },
+            }));
+
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(_path))!;
+        var entry = root["credentials"]!["github-copilot"]!.AsObject();
+        Assert.Equal("company.ghe.com", entry["enterpriseUrl"]!.GetValue<string>());
+        Assert.False(entry.ContainsKey("extra"));
+
+        var reloaded = new FileCredentialStore(_path);
+        var oauth = Assert.IsType<OAuthCredential>(await reloaded.ReadAsync("github-copilot"));
+        Assert.Equal("company.ghe.com", oauth.Extra!["enterpriseUrl"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task OAuth_Legacy_Nested_Extra_Is_Read_And_Flattened_On_Next_Write()
+    {
+        const string legacyJson =
+            "{\"version\":1,\"credentials\":{\"anthropic\":{\"type\":\"oauth\",\"refresh\":\"r\",\"access\":\"a\",\"expires\":1,\"extra\":{\"accountId\":\"acc-9\"}}}}";
+        await File.WriteAllTextAsync(_path, legacyJson);
+
+        var store = new FileCredentialStore(_path);
+        var oauth = Assert.IsType<OAuthCredential>(await store.ReadAsync("anthropic"));
+        Assert.Equal("acc-9", oauth.Extra!["accountId"]!.GetValue<string>());
+
+        await store.ModifyAsync("anthropic", current => Task.FromResult<Credential?>(
+            (OAuthCredential)current! with { AccessToken = "a2" }));
+
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(_path))!;
+        var entry = root["credentials"]!["anthropic"]!.AsObject();
+        Assert.Equal("acc-9", entry["accountId"]!.GetValue<string>());
+        Assert.False(entry.ContainsKey("extra"));
+    }
+
+    [Fact]
+    public async Task OAuth_Extra_Cannot_Override_Reserved_Wire_Keys()
+    {
+        var store = new FileCredentialStore(_path);
+        await store.ModifyAsync("p", _ => Task.FromResult<Credential?>(
+            new OAuthCredential
+            {
+                RefreshToken = "real",
+                AccessToken = "real-access",
+                ExpiresAt = 1L,
+                Extra = new Dictionary<string, JsonNode?>
+                {
+                    ["type"] = "api_key",
+                    ["refresh"] = "evil",
+                    ["access"] = "evil",
+                    ["expires"] = 0,
+                    ["accountId"] = "acc-7",
+                },
+            }));
+
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(_path))!;
+        var entry = root["credentials"]!["p"]!.AsObject();
+        Assert.Equal("oauth", entry["type"]!.GetValue<string>());
+        Assert.Equal("real", entry["refresh"]!.GetValue<string>());
+        Assert.Equal("real-access", entry["access"]!.GetValue<string>());
+        Assert.Equal(1L, entry["expires"]!.GetValue<long>());
+        Assert.Equal("acc-7", entry["accountId"]!.GetValue<string>());
+    }
 }
