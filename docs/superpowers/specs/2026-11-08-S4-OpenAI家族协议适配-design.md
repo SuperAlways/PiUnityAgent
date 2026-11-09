@@ -469,7 +469,7 @@ public static class GroqProvider
 | `x-should-retry` 头比较 | 精确 `"true"/"false"`（`provider-retry.ts:26-28`） | — | `OrdinalIgnoreCase`（`Api/ProviderRetry.cs:51-52`） | B/低 | `"True"` 会识别、pi 落 status 判定；可后续改 Ordinal |
 | retry-after 解析宽容度 | `Number.parseFloat` 前缀取数（`provider-retry.ts:56`） | — | `double.TryParse` 全串；无时区 HTTP 日期 `AssumeUniversal`（`Api/ProviderRetry.cs:79-99`） | B/低 | 尾随垃圾落指数退避；常见 GMT 形态一致 |
 | `ClientIdentity` attribution 哨兵 | Plain JSON 可持久化，`attribution:null` 显式关闭 | — | `AttributionSet` 私有哨兵不可 STJ 往返（`Types/ClientIdentity.cs`） | C/低 | S4 不持久化 identity；D7 持久化时补 |
-| maxTokens 负数边界 | 真值判断会发送负数（`openai-completions.ts:827`） | 同左 | `>0` 守卫跳过负数（`OpenAiCompletions.cs:870`） | D/低 | 负数非合法请求；StreamSimple 有 `ClampMaxTokensToContext`；2026-11-09 复核审计 F-4 补登记 |
+| maxTokens 负数边界 | 真值判断会发送负数（`openai-completions.ts:827`） | 有 `>0` 守卫，同我们 | `>0` 守卫跳过负数（`OpenAiCompletions.cs:870`） | D/低 | 负数非合法请求；StreamSimple 有 `ClampMaxTokensToContext`；2026-11-09 复核审计 F-4 补登记 |
 
 > 本表是**待审计声明**，不是真相源；S4 审计必须回到 pi/pi.net 源码核对。
 
