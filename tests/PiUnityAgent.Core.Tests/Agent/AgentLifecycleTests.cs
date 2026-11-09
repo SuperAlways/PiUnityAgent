@@ -164,6 +164,26 @@ public class AgentLifecycleTests
     }
 
     [Fact]
+    public async Task Empty_Error_Message_Is_Not_Recorded()
+    {
+        // 对齐 pi：turn_end 只在 errorMessage 真值时记录，空串不算错误——
+        // 回合以 Error 结束但状态不落错误信息。
+        var faux = new FauxProvider();
+        faux.SetResponses(new[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage("", StopReason.Error, errorMessage: "")),
+        });
+        var agent = NewAgent(faux);
+
+        await agent.Prompt("p");
+
+        var assistant = Assert.IsType<AssistantMessage>(agent.State.Messages[^1]);
+        Assert.Equal(StopReason.Error, assistant.StopReason);
+        Assert.Equal(string.Empty, assistant.ErrorMessage);
+        Assert.Null(agent.State.ErrorMessage);
+    }
+
+    [Fact]
     public async Task Reset_Keeps_Single_System_Baseline_And_Rejects_While_Running()
     {
         var gate = new TaskCompletionSource<AssistantMessage>(

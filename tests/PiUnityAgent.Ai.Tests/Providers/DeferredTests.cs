@@ -324,6 +324,34 @@ public class FauxDeferredTests
     }
 
     [Fact]
+    public async Task Cancel_With_PreCancelled_Token_Still_Completes()
+    {
+        var faux = new FauxProvider();
+        faux.SetResponses(new FauxResponseStep[]
+        {
+            new FauxResponseStep.Response(Faux.AssistantMessage(Faux.Text("final"))),
+        });
+        var model = faux.GetModel();
+        var first = await faux.Provider.StreamSimple(model, Context(), new SimpleStreamOptions
+        {
+            Deferred = new DeferredRequest.Enabled(),
+        }).WaitForDoneAsync();
+        var handle = first.Deferred!;
+        var provider = Assert.IsAssignableFrom<IDeferredProvider>(faux.Provider);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        // 对齐 pi：faux 的 cancel 是 best-effort，预取消 token 不得让它抛 OperationCanceledException。
+        await provider.CancelDeferredAsync(model, handle, new DeferredCancelOptions
+        {
+            CancellationToken = cts.Token,
+        });
+
+        Assert.Single(faux.State.CancelledDeferred);
+        Assert.Equal(handle.Id, faux.State.CancelledDeferred[0].Id);
+    }
+
+    [Fact]
     public async Task Unknown_Handle_Reports_Exact_Error()
     {
         var faux = new FauxProvider();

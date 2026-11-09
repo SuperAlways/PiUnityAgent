@@ -625,7 +625,9 @@ public sealed class FauxProvider
                 new ProviderResponse(200, new Dictionary<string, string>()),
                 model).ConfigureAwait(false);
         }
-        cancellationToken.ThrowIfCancellationRequested();
+
+        // 对齐 pi：faux 的 cancelDeferred 只做克隆/记录/标记 + onResponse，不读 signal、不抛——
+        // 预取消的 token 也要让 best-effort cancel 正常完成。参数仅为 delegate 签名保留。
     }
 
     private sealed class DeferredEntry

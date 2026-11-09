@@ -265,7 +265,8 @@ public sealed partial class Agent
                     _state.RemovePendingToolCall(end.ToolCallId);
                     break;
                 case AgentEvent.TurnEnd turn:
-                    if (turn.Message.ErrorMessage is not null)
+                    // 对齐 pi：errorMessage 真值才记录（空串不算错误，不覆盖既有错误信息）。
+                    if (!string.IsNullOrEmpty(turn.Message.ErrorMessage))
                     {
                         _state.SetErrorMessage(turn.Message.ErrorMessage);
                     }
