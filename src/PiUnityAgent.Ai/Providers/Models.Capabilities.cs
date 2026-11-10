@@ -72,7 +72,11 @@ public sealed partial class Models
         var requestModel = auth.Auth.BaseUrl is null
             ? model
             : model with { BaseUrl = auth.Auth.BaseUrl };
+        // pi applyAuth 对 cancel 路径同样叠加门面 identity 并执行/剥离 transformHeaders（M1 审计 U-1）。
         var applied = ApplyAuthOptions(requestModel, options, auth);
+        applied = ApplyIdentity(applied);
+        applied = await ApplyTransformHeaders(applied, options?.CancellationToken ?? default)
+            .ConfigureAwait(false);
         await deferred.CancelDeferredAsync(requestModel, handle, applied)
             .ConfigureAwait(false);
     }

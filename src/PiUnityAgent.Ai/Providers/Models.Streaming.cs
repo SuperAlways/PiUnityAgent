@@ -243,7 +243,32 @@ public sealed partial class Models
         CancellationToken cancellationToken)
     {
         var transform = options.TransformHeaders;
-        if (transform is null) return options;
+        if (transform is null)
+        {
+            return options;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        var headers = await transform(options.Headers ?? new Dictionary<string, string?>())
+            .ConfigureAwait(false);
+        return options with { Headers = headers, TransformHeaders = null };
+    }
+
+    // pi applyAuth 对 cancel 路径同样合并门面 identity 并执行/剥离 transformHeaders（M1 审计 U-1 补齐）。
+    private DeferredCancelOptions ApplyIdentity(DeferredCancelOptions options)
+    {
+        var identity = ClientIdentityMerger.Merge(_identity, options.Identity);
+        return identity is null ? options : options with { Identity = identity };
+    }
+
+    private static async Task<DeferredCancelOptions> ApplyTransformHeaders(
+        DeferredCancelOptions options,
+        CancellationToken cancellationToken)
+    {
+        var transform = options.TransformHeaders;
+        if (transform is null)
+        {
+            return options;
+        }
         cancellationToken.ThrowIfCancellationRequested();
         var headers = await transform(options.Headers ?? new Dictionary<string, string?>())
             .ConfigureAwait(false);
