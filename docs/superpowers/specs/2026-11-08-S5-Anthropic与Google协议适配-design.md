@@ -240,7 +240,7 @@ public static class GoogleGenerativeAi
 | `AnthropicOptions.client` | 预构建 SDK client 注入 | 有 | 未移植（无 Anthropic SDK 类型；Fetch 端口承担注入缝） | A | SDK-only 形状；宿主通过 Fetch 注入，无行为差异 |
 | StreamSimple `reasoning=off`（非自适应） | 退化 NaN / `max_tokens:null` | — | 兜底 16384 | D | 更稳健；与 pi 病态路径不同（审计补登记） |
 | Anthropic fallback 计价 tiers | fallback 模型带整个 cost 对象（含 tiers，`anthropic-messages.ts:710-716`） | — | 只取四速率（`AnthropicMessages.cs:500-508`），丢 `cost.tiers` | C/低 | fallback 模型阶梯计价缺失；2026-11-09 审计 U-8 补登记 |
-| 空串 stop_reason | truthy 跳过（`anthropic-messages.ts:841`） | 同款 null 判定 | 已修：`Length > 0` 守卫跳过空串（`AnthropicMessages.cs:736`） | B | 2026-11-09 审计 U-9 修复，回归 pi 语义 |
+| 空串 stop_reason | truthy 跳过（`anthropic-messages.ts:841`） | 同款 null 判定 | 已修：`Length > 0` 守卫跳过空串（`AnthropicMessages.cs:732`；2026-11-10 M1 审计 N-4 行号订正） | B | 2026-11-09 审计 U-9 修复，回归 pi 语义 |
 
 ### 10.3 Google
 

@@ -438,11 +438,11 @@ public static class DefaultStreamFn
 | `runToolCall` 参数 | options 对象 | 位置参数 | 位置参数；`tools` 为独立必填参数（=pi `RunToolCallOptions.tools`，独立于 `context.tools`） | B | C# 无对象字面量；签名含 hooks/onUpdate；tools 独立性系 2026-11-09 审计 U-1 修复，修复后与 pi 无此偏离 |
 | Error 类型 | `Error` | InvalidOperationException | InvalidOperationException | B | 文案逐字；类型 C# 化 |
 | Agent 流失败收场 | `.then(end)`（run reject 时流悬挂） | `PumpAsync` catch→Fail | `stream.Fail(error)` | D/B | 避免消费者悬挂；代价=与 pi 字面不同（pi 契约要求回调不抛） |
-| `DefaultStreamFn` | 模块级可变单例 | 同 | 同（静态 Set/Get/IsConfigured） | B | 宿主注入缝；代价=进程级共享 |
+| `DefaultStreamFn` | 模块级可变单例 | 同 | 同（静态 Set/Get/IsConfigured） | B | 宿主注入缝；代价=进程级共享。注（M1 审计 N-1）：pi agent 层 `StreamFn` 收 `options?: SimpleStreamOptions`（agent types.ts:33-38），我们复用 Ai 基类委托（`Ai/Types/StreamFn.cs:6-9` 收基类 `StreamOptions?`），Core 未单列窄别名，循环恒传 `SimpleStreamOptions` 实例（`AgentLoop.Stream.cs`）——运行时行为同；代价=宿主实现 `DefaultStreamFn` 读 ToolChoice/Reasoning/ThinkingBudgets/Deferred 需下转 `SimpleStreamOptions` |
 | 计时 | `performance.now()` | Stopwatch | Stopwatch | A | 单调钟 |
 | 时间戳 | `Date.now()` | DateTimeOffset.UtcNow | 同 | A/B | 毫秒时间戳 |
 | ToolResultMessage.durationMs | number | long? | long? outcome → int? message | B | S1 消息字段为 int?；代价=超长任务截断（实际不可达） |
-| D16 流式解析引擎 | pi streaming-json/json-parse | pi.net 已移植 | 移植 pi.net internal + 适配器接线 | B | 与 pi 行为差分锁快照/文案；代价=适配器三处修改 |
+| D16 流式解析引擎 | pi streaming-json/json-parse | pi.net 已移植 | 移植 pi.net internal + 适配器接线 | B | 与 pi 行为差分锁快照/文案；代价=适配器三处修改。注（M1 审计 N-9）：① argumentsError 内层文案为 .NET `JsonException.Message`（与 V8 `JSON.parse` 措辞族不同；模板 `JsonParse.cs:130` 与 pi 逐字一致，仅内层 message 不同）；② `ToolCallArguments.ToObject` 每次 Append/Replace 新建 JsonObject（`ToolCallArguments.cs:39-43`）vs pi 快照不变时复用同引用（streaming-json.ts:489-495 `#partial`）——按引用判变的消费者可见，属本表"事件快照"行（记录 `with` 快照族）的延伸，无引用别名风险 |
 | proxy.ts | 服务端代理流 | 已移植 | 不做 | C/D22 | server RPC 路线非 S7；登记后续扩展；代价=代理模式需另立项 |
 | 事件快照 | `{...partialMessage}` 浅拷贝 | 记录不可变 | 记录 `with` 快照 | A/B | C# record 不可变；无别名风险 |
 | PollAsync 吞异常 | `getSteeringMessages` 抛错即 reject runAgentLoop（`.then(end)` 模式下流悬挂） | 同吞（AgentLoopRunner） | 回调抛错→捕获返回空列表继续 | D | pi.net 硬化；代价=钩子异常被静默降级为空轮询（2026-11-09 审计 U-3 登记） |
