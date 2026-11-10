@@ -93,6 +93,8 @@ public static void CleanupSessionResources(string? sessionId = null);
 | 5 | 并发模型 | 模块级可变状态（`lastOrdinaryTimestamp`/`sequence`），单线程假设 | 无移植 | `Uuid` 全程 `lock`；`SessionResources` 锁保护集合 | D | C# 宿主可能多线程；pi 无并发语义可对照。代价=锁粒度带来可忽略开销；行为等价且并发安全 |
 | 6 | 注销句柄 | 返回注销闭包 `() => void` | 无移植 | 返回 `IDisposable`（Dispose 即注销，幂等） | B | C# 资源释放惯例；无行为差异 |
 | 7 | 集合返回类型 | `getOverflowPatterns(): RegExp[]` | 无移植 | `IReadOnlyList<Regex>`（仍返回副本） | B | C# 集合接口惯例；无行为差异 |
+| 8 | 清理回调调用顺序 | `Set` 为插入序，cleanup 按注册顺序调用 | 无移植 | `HashSet<SessionResourceCleanup>`，迭代序未定义 | D | 审计复核 R-1；收益=O(1) 去重；代价=多回调时调用顺序不保证（测试不契约化顺序）。若需序，可改 List+HashSet 双结构 |
+| 9 | null 清理回调 | `Set.add(null)` 可入表，cleanup 时 null 调用抛 TypeError 被聚合成 AggregateError | 无移植 | 注册时即抛 `ArgumentNullException` | D | 审计复核 R-2；收益=早失败、错误定位在注册点；代价=与 pi 的“清理时才聚合失败”时序不同 |
 
 ---
 
