@@ -253,6 +253,56 @@ public class DeferredModelsTests
         var message = await models.FetchDeferredAsync(model, Handle());
         Assert.Equal(StopReason.Stop, message.StopReason);
     }
+
+    [Fact]
+    public async Task Cancel_Applies_Identity_And_TransformHeaders()
+    {
+        // M1 审计 U-1：cancel 路径与 fetch/stream 一样要合并门面 identity 并执行/剥离 transformHeaders。
+        var model = Model();
+        DeferredCancelOptions? seen = null;
+        var provider = new StaticProvider(
+            "p1", "p1", new[] { model }, ProviderTestSupport.DoneStream,
+            ProviderTestSupport.KeylessAuth(),
+            cancelDeferred: (requestModel, handle, options, signal) =>
+            {
+                seen = options;
+                return Task.CompletedTask;
+            });
+
+        var models = new Models(new CreateModelsOptions
+        {
+            Identity = new ClientIdentity
+            {
+                Attribution = new ClientAttribution("test-app", "https://example.com"),
+                Version = "1.2.3",
+            },
+        });
+        models.SetProvider(provider);
+
+        await models.CancelDeferredAsync(model, Handle(), new DeferredCancelOptions
+        {
+            TransformHeaders = headers =>
+            {
+                var merged = new Dictionary<string, string?>();
+                foreach (var entry in headers)
+                {
+                    merged[entry.Key] = entry.Value;
+                }
+                merged["x-test"] = "1";
+                return Task.FromResult<IReadOnlyDictionary<string, string?>>(merged);
+            },
+        });
+
+        Assert.NotNull(seen);
+        // 门面 identity 被合并进 cancel 请求选项。
+        Assert.NotNull(seen!.Identity);
+        Assert.Equal("test-app", seen.Identity!.Attribution!.Name);
+        Assert.Equal("1.2.3", seen.Identity.Version);
+        // transformHeaders 已执行并剥离：provider 不感知该字段。
+        Assert.Null(seen.TransformHeaders);
+        Assert.NotNull(seen.Headers);
+        Assert.Equal("1", seen.Headers!["x-test"]);
+    }
 }
 
 public class FauxDeferredTests

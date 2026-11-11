@@ -460,7 +460,7 @@ public static class GroqProvider
 | 图片/分类 | S4/S5 范围外 | 有 | 不做 | C/D4/D5 | 2B 后置 |
 | ProviderRetry 无状态码错误 | 无 statusCode 一律重试（含 TLS/DNS；`provider-retry.ts:30`） | 同 | 仅 `Kind == Connect` 或传输层 `IsRetryable` 重试（`Api/ProviderRetry.cs:55-56`） | D | 尊重 UnityLlmTransport 的显式 `IsRetryable=false`，避免对永久性 TLS/代理/协议配置错误空转；代价=TLS 故障少一次自愈机会；`ProviderRetryTests` 锁定 |
 | `ToolCallArguments` 修复 JSON | `parseJsonWithRepair` 先原样 parse，失败后 `repairJson` 再试（`utils/json-parse.ts:33-120`） | 同 | `Finish()` 只做一次 `JsonNode.Parse`；可修复的裸控制字符/非法转义落 ArgumentsError（`Api/ToolCallArguments.cs:33-46`） | C/D16 | 最小端口；畸形参数可救的调用判失败；repairJson 端口归后续（不改变形状） |
-| Responses output_item 缺 `item` | 缺失→直接用 `event.item` 抛错→Error 终态（responses-shared.ts:675-676/746-749） | 同 | `item` 非对象时跳过该事件（`OpenAiResponses.cs:1557-1560/1654`） | D/低 | 对不合规服务端更宽容；2026-11-09 审计 U-3 补登记 |
+| Responses output_item 缺 `item` / `arguments.done` 缺 `arguments` | 前者缺失→直接用 `event.item` 抛错→Error 终态（responses-shared.ts:675-676/746-749）；后者缺 `event.arguments` 时 `.replace(undefined)` 抛 TypeError→流 Error 终态（responses-shared.ts:735） | 同 | `item` 非对象时跳过该事件（`OpenAiResponses.cs:1557-1560/1654`）；`arguments.done` 缺 `arguments` 容忍为空串 `JsonStr(...) ?? ""`（`OpenAiResponses.cs:1622`） | D/低 | 对不合规服务端更宽容；2026-11-09 审计 U-3 补登记；2026-11-10 M1 审计 N-3 并入 `arguments.done` 半边（同 D 族） |
 | `GetClientVersion` 版本源 | `PI_AI_VERSION="1.5.0"`（`utils/version.ts:2`） | — | identity.Version 优先，缺省 Ai 程序集 Major.Minor.Build（`Types/ClientIdentityHelpers.cs:26-34`） | A/B | C# 无 PI_AI_VERSION 常量；代价=UA 版本段随构建版本漂移 |
 | Responses 错误文案前缀 | `OpenAI API error (400): …`（`openai-responses.ts:253-256`） | — | `400: …`（`OpenAiResponses.cs:216`） | B/低 | 纯文案差异；completions 侧 pi 本无前缀，S4 两侧统一 |
 | `Usage.Reasoning` 缺省 | 恒数值（`|| 0`） | 恒 0 | 未上报时 null（`OpenAiCompletions.cs:2708`、`OpenAiResponses.cs:1499-1500`（1499 单行形似恒 0，必须连读 1500）） | D/低 | S3 `Usage.Reasoning` 为 int?；代价=终止消息少 `reasoning:0` 键 |
@@ -469,7 +469,7 @@ public static class GroqProvider
 | `x-should-retry` 头比较 | 精确 `"true"/"false"`（`provider-retry.ts:26-28`） | — | `OrdinalIgnoreCase`（`Api/ProviderRetry.cs:51-52`） | B/低 | `"True"` 会识别、pi 落 status 判定；可后续改 Ordinal |
 | retry-after 解析宽容度 | `Number.parseFloat` 前缀取数（`provider-retry.ts:56`） | — | `double.TryParse` 全串；无时区 HTTP 日期 `AssumeUniversal`（`Api/ProviderRetry.cs:79-99`） | B/低 | 尾随垃圾落指数退避；常见 GMT 形态一致 |
 | `ClientIdentity` attribution 哨兵 | Plain JSON 可持久化，`attribution:null` 显式关闭 | — | `AttributionSet` 私有哨兵不可 STJ 往返（`Types/ClientIdentity.cs`） | C/低 | S4 不持久化 identity；D7 持久化时补 |
-| maxTokens 负数边界 | 真值判断会发送负数（`openai-completions.ts:827`） | 有 `>0` 守卫，同我们 | `>0` 守卫跳过负数（`OpenAiCompletions.cs:870`） | D/低 | 负数非合法请求；StreamSimple 有 `ClampMaxTokensToContext`；2026-11-09 复核审计 F-4 补登记 |
+| maxTokens 负数边界 | 真值判断会发送负数（`openai-completions.ts:827`） | 有 `>0` 守卫，同我们 | `>0` 守卫跳过负数（守卫 `OpenAiCompletions.cs:864`、赋值 `:869`；2026-11-10 M1 审计 N-4 行号订正） | D/低 | 负数非合法请求；StreamSimple 有 `ClampMaxTokensToContext`；2026-11-09 复核审计 F-4 补登记 |
 
 > 本表是**待审计声明**，不是真相源；S4 审计必须回到 pi/pi.net 源码核对。
 
